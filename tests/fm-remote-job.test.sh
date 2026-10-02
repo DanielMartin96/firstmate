@@ -855,8 +855,13 @@ done
   || fail "the ownership-loss worker did not stop"
 rm -rf -- "$LOST_STATE/worker.lock"
 kill -CONT "$LOST_TERM_PID"
-touch -t 200001010000 "$LOST_STATE/worker.ready"
-sleep 1.5
+# The independent heartbeat may already have verified ownership before the
+# lock was removed. Let that in-flight refresh expire through the public
+# probe's 10-second freshness window instead of racing it with a backdated file.
+for _ in $(seq 1 80); do
+  ( FM_REMOTE_JOB_STATE_ROOT="$LOST_STATE"; fm_remote_job_probe "$LOST_HOME" ) || break
+  sleep 0.25
+done
 ! ( FM_REMOTE_JOB_STATE_ROOT="$LOST_STATE"; fm_remote_job_probe "$LOST_HOME" ) \
   || fail "a worker without its ownership lock kept readiness fresh"
 assert_absent "$LOST_STATE/worker.lock" "the ownership lock reappeared before TERM"
