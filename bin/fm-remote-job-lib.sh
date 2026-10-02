@@ -1162,7 +1162,7 @@ fm_remote_job_write_launchagent() { # <remote-root> <account-home>
   fi
   [ -d "$FM_REMOTE_JOB_LAUNCH_AGENT_DIR" ] && [ ! -L "$FM_REMOTE_JOB_LAUNCH_AGENT_DIR" ] || return 1
   [ -d "$FM_REMOTE_JOB_LAUNCH_AGENT_LOG_DIR" ] && [ ! -L "$FM_REMOTE_JOB_LAUNCH_AGENT_LOG_DIR" ] || return 1
-  tmp="$FM_REMOTE_JOB_LAUNCH_AGENT_DIR/.$FM_REMOTE_JOB_LABEL.plist.tmp.$$"
+  tmp="$FM_REMOTE_JOB_LAUNCH_AGENT_DIR/.$FM_REMOTE_JOB_LABEL.plist.tmp.${BASHPID:-$$}"
   fm_remote_job_render_launchagent "$root" "$account_home" > "$tmp" || {
     rm -f -- "$tmp"
     FM_REMOTE_JOB_ERROR="remote job paths cannot be embedded safely in a property list"
@@ -1176,18 +1176,91 @@ fm_remote_job_write_launchagent() { # <remote-root> <account-home>
   }
 }
 
-fm_remote_job_reload_launchagent() { # <account-home> <uid>
-  local account_home=$1 uid=$2 out
+fm_remote_job_reload_lock_acquire() { # <lock-dir>
+  local lock=$1 pid recorded_start actual_start recorded_command actual_command mtime now attempt=0
+  while [ "$attempt" -lt 300 ]; do
+    if (umask 077; mkdir "$lock") 2>/dev/null; then
+      printf '%s\n' "${BASHPID:-$$}" > "$lock/pid" || { rm -rf -- "$lock"; return 1; }
+      fm_remote_job_process_start "${BASHPID:-$$}" > "$lock/start" || { rm -rf -- "$lock"; return 1; }
+      fm_remote_job_process_command "${BASHPID:-$$}" > "$lock/command" || { rm -rf -- "$lock"; return 1; }
+      return 0
+    fi
+    [ -d "$lock" ] && [ ! -L "$lock" ] || return 1
+    pid=$(fm_remote_job_read_single_line "$lock/pid" 64 2>/dev/null || true)
+    case "$pid" in ''|*[!0-9]*) pid= ;; esac
+    if [ -n "$pid" ] && [ "$pid" -gt 1 ] &&
+      recorded_start=$(fm_remote_job_read_single_line "$lock/start" 256 2>/dev/null) &&
+      actual_start=$(fm_remote_job_process_start "$pid" 2>/dev/null) &&
+      [ "$recorded_start" = "$actual_start" ] &&
+      recorded_command=$(fm_remote_job_read_single_line "$lock/command" 8192 2>/dev/null) &&
+      actual_command=$(fm_remote_job_process_command "$pid" 2>/dev/null) &&
+      [ "$recorded_command" = "$actual_command" ]; then
+      sleep 0.1
+      attempt=$((attempt + 1))
+      continue
+    fi
+    mtime=$(fm_remote_job_path_mtime "$lock" 2>/dev/null || true)
+    now=$(date +%s)
+    case "$mtime" in ''|*[!0-9]*) sleep 0.1 ;; *)
+      if [ $((now - mtime)) -ge 30 ]; then
+        [ ! -L "$lock/pid" ] && [ ! -L "$lock/start" ] && [ ! -L "$lock/command" ] || return 1
+        rm -f -- "$lock/pid" "$lock/start" "$lock/command" || return 1
+        rmdir "$lock" 2>/dev/null || true
+      else
+        sleep 0.1
+      fi
+    esac
+    attempt=$((attempt + 1))
+  done
+  return 1
+}
+
+fm_remote_job_reload_lock_release() { # <lock-dir>
+  local lock=$1 pid
+  pid=$(fm_remote_job_read_single_line "$lock/pid" 64 2>/dev/null || true)
+  [ "$pid" = "${BASHPID:-$$}" ] || return 1
+  rm -f -- "$lock/pid" "$lock/start" "$lock/command" && rmdir "$lock"
+}
+
+fm_remote_job_live_current_launchagent_owner() { # <root> <account-home> <uid>
+  local root=$1 account_home=$2 uid=$3 identity
+  fm_remote_job_launchagent_loaded "$root" "$account_home" "$uid" || return 1
+  fm_remote_job_lock_owner_matches_process "$account_home" || return 1
+  identity=$(fm_remote_job_worker_identity_path)
+  if [ ! -e "$identity" ] && [ ! -L "$identity" ]; then return 0; fi
+  fm_remote_job_worker_identity_matches "$root" "$account_home"
+}
+
+fm_remote_job_reload_launchagent() { # <account-home> <uid> <remote-root>
+  local account_home=$1 uid=$2 root=${3:-} out lock
+  fm_remote_job_prepare_state "$account_home" || return 1
+  lock="$FM_REMOTE_JOB_STATE/launchagent.reload.lock"
+  fm_remote_job_reload_lock_acquire "$lock" || {
+    FM_REMOTE_JOB_ERROR="timed out waiting for the remote job LaunchAgent reload lock"
+    return 1
+  }
   fm_remote_job_launchagent_paths "$account_home"
+  # A concurrent caller may already have repaired readiness while this caller
+  # waited. Never boot out that fresh worker.
+  if [ -n "$root" ] && fm_remote_job_live_current_launchagent_owner "$root" "$account_home" "$uid"; then
+    fm_remote_job_reload_lock_release "$lock" || true
+    return 0
+  fi
   launchctl bootout "gui/$uid/$FM_REMOTE_JOB_LABEL" >/dev/null 2>&1 || true
   if ! out=$(launchctl bootstrap "gui/$uid" "$FM_REMOTE_JOB_LAUNCH_AGENT_PLIST" 2>&1); then
     FM_REMOTE_JOB_ERROR="launchctl bootstrap gui/$uid refused: ${out:-no diagnostic}"
+    fm_remote_job_reload_lock_release "$lock" || true
     return 1
   fi
   if ! out=$(launchctl kickstart -k "gui/$uid/$FM_REMOTE_JOB_LABEL" 2>&1); then
     FM_REMOTE_JOB_ERROR="launchctl kickstart gui/$uid/$FM_REMOTE_JOB_LABEL refused: ${out:-no diagnostic}"
+    fm_remote_job_reload_lock_release "$lock" || true
     return 1
   fi
+  fm_remote_job_reload_lock_release "$lock" || {
+    FM_REMOTE_JOB_ERROR="could not release the remote job LaunchAgent reload lock"
+    return 1
+  }
 }
 
 fm_remote_job_start_linux_worker() { # <remote-root> <account-home>
@@ -1228,7 +1301,7 @@ fm_remote_job_start_linux_worker() { # <remote-root> <account-home>
 }
 
 fm_remote_job_ensure_worker() { # <remote-root> <account-home>
-  local root=$1 account_home=$2 platform uid identity_matches=0
+  local root=$1 account_home=$2 platform uid identity_matches=0 owner_alive=0 identity_file
   FM_REMOTE_JOB_ERROR=
   FM_REMOTE_JOB_REPAIRED=0
   root=$(fm_remote_job_canonical_existing_dir "$root") || {
@@ -1257,9 +1330,34 @@ fm_remote_job_ensure_worker() { # <remote-root> <account-home>
       fm_remote_job_write_launchagent "$root" "$account_home" || return 1
       FM_REMOTE_JOB_REPAIRED=1
     fi
-    if ! fm_remote_job_launchagent_loaded "$root" "$account_home" "$uid" ||
-      [ "$FM_REMOTE_JOB_REPAIRED" -eq 1 ] || [ "$identity_matches" -eq 0 ]; then
-      fm_remote_job_reload_launchagent "$account_home" "$uid" || return 1
+    identity_file=$(fm_remote_job_worker_identity_path)
+    if fm_remote_job_lock_owner_matches_process "$account_home"; then
+      owner_alive=1
+      if [ "$FM_REMOTE_JOB_REPAIRED" -eq 1 ] ||
+        { { [ -e "$identity_file" ] || [ -L "$identity_file" ]; } && [ "$identity_matches" -eq 0 ]; }; then
+        # Only stop the lock owner after the shared pid, start-time, and
+        # command checks have all verified it as this worker.
+        fm_remote_job_stop_worker_tree "$FM_REMOTE_JOB_OWNER_PID" || {
+          FM_REMOTE_JOB_ERROR="stale remote job worker did not stop safely"
+          return 1
+        }
+        owner_alive=0
+        FM_REMOTE_JOB_REPAIRED=1
+      elif ! fm_remote_job_launchagent_loaded "$root" "$account_home" "$uid" &&
+        [ -e "$identity_file" ]; then
+        fm_remote_job_stop_worker_tree "$FM_REMOTE_JOB_OWNER_PID" || {
+          FM_REMOTE_JOB_ERROR="untracked remote job worker did not stop safely"
+          return 1
+        }
+        owner_alive=0
+        FM_REMOTE_JOB_REPAIRED=1
+      fi
+    fi
+    if [ "$owner_alive" -eq 0 ] && {
+      ! fm_remote_job_launchagent_loaded "$root" "$account_home" "$uid" ||
+        [ "$FM_REMOTE_JOB_REPAIRED" -eq 1 ] || [ "$identity_matches" -eq 0 ];
+    }; then
+      fm_remote_job_reload_launchagent "$account_home" "$uid" "$root" || return 1
       FM_REMOTE_JOB_REPAIRED=1
     fi
   else
@@ -1267,7 +1365,12 @@ fm_remote_job_ensure_worker() { # <remote-root> <account-home>
   fi
   fm_remote_job_wait_for_probe "$root" "$account_home" && return 0
   if [ "$platform" = darwin ]; then
-    fm_remote_job_reload_launchagent "$account_home" "$uid" || return 1
+    if fm_remote_job_lock_owner_matches_process "$account_home"; then
+      printf '%s\n' 'remote-job: ready heartbeat stale while verified worker lock owner is alive' >&2
+      FM_REMOTE_JOB_ERROR="remote job worker owns its lock but its ready heartbeat is stale"
+      return 1
+    fi
+    fm_remote_job_reload_launchagent "$account_home" "$uid" "$root" || return 1
     FM_REMOTE_JOB_REPAIRED=1
     fm_remote_job_wait_for_probe "$root" "$account_home" && return 0
   else
