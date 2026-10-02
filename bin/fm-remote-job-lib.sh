@@ -1257,13 +1257,21 @@ fm_remote_job_reload_lock_release() { # <lock-link>
 
 # launchd's own record of the process it runs for the agent, so a verified lock
 # owner that launchd lost track of is never mistaken for the current worker.
-fm_remote_job_launchagent_tracks() { # <remote-root> <account-home> <uid> <pid>
-  local root=$1 account_home=$2 uid=$3 pid=$4
+fm_remote_job_launchagent_pid() { # <remote-root> <account-home> <uid>
+  local root=$1 account_home=$2 uid=$3 pid
   fm_remote_job_launchagent_loaded "$root" "$account_home" "$uid" || return 1
-  launchctl print "gui/$uid/$FM_REMOTE_JOB_LABEL" 2>/dev/null | awk -v expected="$pid" '
-    $1 == "pid" && $2 == "=" { found = ($3 == expected); exit }
-    END { exit found ? 0 : 1 }
-  '
+  pid=$(launchctl print "gui/$uid/$FM_REMOTE_JOB_LABEL" 2>/dev/null | awk '
+    $1 == "pid" && $2 == "=" { print $3; exit }
+  ')
+  case "$pid" in ''|*[!0-9]*) return 1 ;; esac
+  kill -0 "$pid" 2>/dev/null || return 1
+  printf '%s\n' "$pid"
+}
+
+fm_remote_job_launchagent_tracks() { # <remote-root> <account-home> <uid> <pid>
+  local tracked
+  tracked=$(fm_remote_job_launchagent_pid "$1" "$2" "$3") || return 1
+  [ "$tracked" = "$4" ]
 }
 
 # The verified lock owner is the launchd-tracked worker and runs current code,
@@ -1318,6 +1326,9 @@ fm_remote_job_repair_launchagent() { # <remote-root> <account-home> <uid>
       return 1
     }
     FM_REMOTE_JOB_REPAIRED=1
+  elif [ "$FM_REMOTE_JOB_REPAIRED" -eq 0 ] && fm_remote_job_launchagent_pid "$root" "$account_home" "$uid" >/dev/null; then
+    fm_remote_job_wait_for_probe "$root" "$account_home" && return 0
+    fm_remote_job_stale_heartbeat_owner "$account_home" && return 1
   fi
   if [ "$FM_REMOTE_JOB_REPAIRED" -eq 1 ] ||
     ! fm_remote_job_launchagent_loaded "$root" "$account_home" "$uid" ||

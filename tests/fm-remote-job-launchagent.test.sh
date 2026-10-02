@@ -70,7 +70,7 @@ stop_tracked() {
 start_worker() {
   set -m
   (
-    /bin/sleep 1
+    /bin/sleep "${FM_TEST_SPAWN_DELAY:-1}"
     HOME="$FM_TEST_ACCOUNT" FM_ROOT_OVERRIDE="$FM_TEST_ROOT" \
       FM_REMOTE_JOB_STATE_ROOT="$FM_TEST_STATE" FM_REMOTE_JOB_PLATFORM_OVERRIDE=Darwin \
       exec "$FM_TEST_WORKER"
@@ -229,16 +229,44 @@ REPLACEMENT_PID=$(tracked)
   || fail 'the loaded agent did not regain a launchd-tracked lock owner'
 pass 'Darwin replaces a current-code owner that the loaded agent does not track'
 
+# A repairing caller killed while holding the repair lock leaves its record.
+plant_dead_repair_lock() {
+  local holder name
+  holder=$(bash -c 'printf "%s\n" "$$"')
+  name=launchagent.repair.owner.$holder.1
+  mkdir "$STATE_ROOT/$name" || return 1
+  printf '%s\n' "$holder" > "$STATE_ROOT/$name/pid"
+  printf 'gone\n' > "$STATE_ROOT/$name/start"
+  printf 'gone\n' > "$STATE_ROOT/$name/command"
+  ln -s "$name" "$STATE_ROOT/launchagent.repair"
+}
+
+# --- a repairing caller that dies after kickstart cannot doom its spawn ------
+
+# Caller A reloads the agent and dies before its asynchronous spawn publishes
+# the worker lock or identity. Caller B must let that spawn finish starting.
+launchctl bootout "gui/$(id -u)/dev.firstmate.remote-job" || fail 'the stub launchd did not unload the agent'
+launchctl bootstrap "gui/$(id -u)" "$FM_TEST_PLIST" || fail 'the stub launchd did not load the agent'
+FM_TEST_SPAWN_DELAY=3 launchctl kickstart -k "gui/$(id -u)/dev.firstmate.remote-job" \
+  || fail 'the stub launchd did not kickstart the agent'
+plant_dead_repair_lock || fail 'could not plant the dead caller repair lock'
+SPAWN_PID=$(tracked)
+[ -z "$(lock_owner)" ] && [ ! -e "$STATE_ROOT/worker.identity" ] \
+  || fail 'the spawn published ownership before the surviving caller ran'
+: > "$LAUNCH_LOG"
+ensure_darwin > "$TMP_ROOT/ensure-dead-caller.out" 2>&1 \
+  || { cat "$TMP_ROOT/ensure-dead-caller.out"; fail 'ensure failed after the repairing caller died'; }
+[ "$(launch_count bootout)" -eq 0 ] || { cat "$LAUNCH_LOG"; fail 'ensure booted out the dead caller fresh spawn'; }
+[ "$(tracked)" = "$SPAWN_PID" ] && [ "$(lock_owner)" = "$SPAWN_PID" ] \
+  || fail 'the dead caller spawn did not become the launchd-tracked lock owner'
+[ ! -e "$STATE_ROOT/launchagent.repair" ] && [ ! -L "$STATE_ROOT/launchagent.repair" ] \
+  || fail 'the reclaimed repair lock was not released'
+pass 'a fresh spawn survives when the caller that started it dies before publication'
+
 # --- a dead repair-lock holder is reclaimed by exactly one caller ------------
 
-# A killed caller left its lock; two later callers must not both reclaim it.
-DEAD_HOLDER=$(bash -c 'printf "%s\n" "$$"')
-DEAD_NAME=launchagent.repair.owner.$DEAD_HOLDER.1
-mkdir "$STATE_ROOT/$DEAD_NAME"
-printf '%s\n' "$DEAD_HOLDER" > "$STATE_ROOT/$DEAD_NAME/pid"
-printf 'gone\n' > "$STATE_ROOT/$DEAD_NAME/start"
-printf 'gone\n' > "$STATE_ROOT/$DEAD_NAME/command"
-ln -s "$DEAD_NAME" "$STATE_ROOT/launchagent.repair"
+# Two later callers must not both reclaim a dead holder's lock.
+plant_dead_repair_lock || fail 'could not plant the dead holder repair lock'
 HOLD_LOG="$TMP_ROOT/hold.log"
 : > "$HOLD_LOG"
 hold_lock() (
