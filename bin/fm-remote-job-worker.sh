@@ -101,11 +101,11 @@ worker_account_home() {
   CDPATH='' cd ~ 2>/dev/null && pwd -P
 }
 
-worker_write_heartbeat() {
-  local ready tmp
+worker_write_heartbeat() { # <owner-pid>
+  local owner=$1 ready tmp
   ready=$(fm_remote_job_worker_ready_path)
   tmp=$(umask 077; mktemp "$FM_REMOTE_JOB_STATE/.ready.XXXXXX") || return 1
-  printf '%s\n' "${BASHPID:-$$}" > "$tmp" || { rm -f -- "$tmp"; return 1; }
+  printf '%s\n' "$owner" > "$tmp" || { rm -f -- "$tmp"; return 1; }
   chmod 600 "$tmp" || { rm -f -- "$tmp"; return 1; }
   mv -f -- "$tmp" "$ready"
 }
@@ -119,7 +119,11 @@ worker_heartbeat_loop() { # <account-home> <owner-pid>
     [ -n "$owner_state" ] && [[ "$owner_state" != *Z* ]] &&
     fm_remote_job_lock_owner_matches_process "$account_home" &&
     [ "$FM_REMOTE_JOB_OWNER_PID" = "$owner" ]; do
-    touch -c -- "$ready" || exit 1
+    if [ ! -e "$ready" ] && [ ! -L "$ready" ]; then
+      worker_write_heartbeat "$owner" || exit 1
+    else
+      touch -c -- "$ready" || exit 1
+    fi
     /bin/sleep 1
   done
 }
@@ -1209,7 +1213,7 @@ main() {
   trap worker_shutdown HUP INT TERM
   worker_publish_identity "$account_home" || { worker_error "cannot publish worker code identity"; exit 1; }
   worker_publish_pid || { worker_error "cannot publish worker pid"; exit 1; }
-  worker_write_heartbeat || { worker_error "cannot update worker heartbeat"; exit 1; }
+  worker_write_heartbeat "${BASHPID:-$$}" || { worker_error "cannot update worker heartbeat"; exit 1; }
   worker_start_heartbeat "$account_home"
   sweep_interval=$WORKER_SWEEP_SECONDS
   [ "$FM_REMOTE_JOB_STAGE_REAP_SECONDS" -ge "$sweep_interval" ] || sweep_interval=$FM_REMOTE_JOB_STAGE_REAP_SECONDS

@@ -46,6 +46,18 @@ case "$last" in
 esac
 exec "$FM_TEST_REAL_RMDIR" "$@"
 SH
+# Fault injection keeps the heartbeat process alive but prevents timestamp
+# refresh, so ensure must handle a genuinely stale live owner's readiness.
+REAL_TOUCH=$(command -v touch)
+cat > "$STUB_BIN/touch" <<'SH'
+#!/bin/bash
+last=${!#}
+if [ "$last" = "$FM_TEST_STATE/worker.ready" ] && [ -f "$FM_TEST_STALE_GATE" ]; then
+  : > "$FM_TEST_STALE_GATE.observed"
+  exit 0
+fi
+exec "$FM_TEST_REAL_TOUCH" "$@"
+SH
 cat > "$STUB_BIN/launchctl" <<'SH'
 #!/bin/bash
 printf '%s\n' "$*" >> "$FM_TEST_LAUNCH_LOG"
@@ -109,9 +121,10 @@ case "${1:-}" in
   *) exit 2 ;;
 esac
 SH
-chmod +x "$STUB_BIN/rmdir" "$STUB_BIN/launchctl"
+chmod +x "$STUB_BIN/rmdir" "$STUB_BIN/touch" "$STUB_BIN/launchctl"
 export PATH="$STUB_BIN:$PATH"
 export FM_TEST_REAL_RMDIR="$REAL_RMDIR" FM_TEST_LAUNCH_LOG="$LAUNCH_LOG"
+export FM_TEST_REAL_TOUCH="$REAL_TOUCH" FM_TEST_STALE_GATE="$TMP_ROOT/stale-gate"
 export FM_TEST_ROOT="$REMOTE_ROOT" FM_TEST_ACCOUNT="$ACCOUNT_HOME"
 export FM_TEST_WORKER="$REMOTE_ROOT/bin/fm-remote-job-worker.sh"
 export FM_TEST_WORKER_LOG="$TMP_ROOT/worker.log" FM_TEST_STATE="$STATE_ROOT"
@@ -145,6 +158,14 @@ ensure_darwin() (
   }
 )
 
+file_mode() {
+  if [ "$(uname)" = Darwin ]; then
+    stat -f %Lp "$1"
+  else
+    stat -c %a "$1"
+  fi
+}
+
 tracked() { cat "$FM_TEST_TRACKED" 2>/dev/null; }
 lock_owner() { cat "$STATE_ROOT/worker.lock/pid" 2>/dev/null; }
 launch_count() { grep -c "^$1 " "$LAUNCH_LOG" 2>/dev/null || true; }
@@ -163,6 +184,20 @@ for _ in $(seq 1 200); do
 done
 [ -f "$SWEEP_GATE" ] || { cat "$FM_TEST_WORKER_LOG"; fail 'the real worker did not enter its sequence-claim sweep'; }
 [ "$(lock_owner)" = "$SWEEP_PID" ] || fail 'the launchd-tracked worker does not own the worker lock'
+# Remove readiness under a live worker blocked in its sweep: only the
+# independent heartbeat can restore it before the sweep is released.
+rm -f "$STATE_ROOT/worker.ready"
+for _ in $(seq 1 100); do
+  [ -f "$STATE_ROOT/worker.ready" ] && break
+  /bin/sleep 0.05
+done
+[ -f "$STATE_ROOT/worker.ready" ] || fail 'the live worker heartbeat did not recreate missing readiness during its sweep'
+[ "$(fm_remote_job_read_single_line "$STATE_ROOT/worker.ready" 64)" = "$SWEEP_PID" ] \
+  || fail 'recreated readiness did not identify the serving worker'
+[ "$(file_mode "$STATE_ROOT/worker.ready")" = 600 ] \
+  || fail 'recreated readiness did not retain its private mode'
+fm_remote_job_probe "$ACCOUNT_HOME" || fail 'recreated readiness did not restore probe availability'
+pass 'the live worker recreates missing readiness independently of a blocked sweep'
 # Outlast the probe's 10-second freshness bound while the main loop is blocked.
 /bin/sleep 11
 : > "$LAUNCH_LOG"
@@ -196,6 +231,35 @@ FRESH_PID=$(tracked)
 kill -0 "$FRESH_PID" 2>/dev/null || fail 'no tracked worker survived the concurrent ensures'
 [ "$(lock_owner)" = "$FRESH_PID" ] || fail 'the surviving worker lock owner is not the launchd-tracked worker'
 pass 'concurrent Darwin ensures serialize one reload and adopt its fresh worker'
+
+# --- stale readiness diagnoses a verified tracked owner without reloading ------
+
+fm_remote_job_launchagent_owner_current "$REMOTE_ROOT" "$ACCOUNT_HOME" "$(id -u)" \
+  || fail 'the stale-readiness fixture is not a verified launchd-tracked current owner'
+: > "$FM_TEST_STALE_GATE"
+for _ in $(seq 1 100); do
+  [ -f "$FM_TEST_STALE_GATE.observed" ] && break
+  /bin/sleep 0.05
+done
+[ -f "$FM_TEST_STALE_GATE.observed" ] || fail 'heartbeat refresh fault injection was not reached'
+"$REAL_TOUCH" -t 200001010000 "$STATE_ROOT/worker.ready"
+fm_remote_job_probe "$ACCOUNT_HOME" && fail 'the fault-injected readiness was not stale'
+: > "$LAUNCH_LOG"
+if ensure_darwin > "$TMP_ROOT/ensure-stale.out" 2>&1; then
+  fail 'ensure accepted stale readiness for a live tracked worker'
+fi
+grep -Fx 'remote-job: ready heartbeat stale while verified worker lock owner is alive' "$TMP_ROOT/ensure-stale.out" >/dev/null \
+  || { cat "$TMP_ROOT/ensure-stale.out"; fail 'ensure omitted the named stale-ready diagnostic'; }
+for action in bootout bootstrap kickstart; do
+  [ "$(launch_count "$action")" -eq 0 ] || fail "stale readiness triggered launchctl $action"
+done
+kill -0 "$FRESH_PID" 2>/dev/null || fail 'stale readiness killed the verified live worker'
+[ "$(tracked)" = "$FRESH_PID" ] && [ "$(lock_owner)" = "$FRESH_PID" ] \
+  || fail 'stale readiness changed launchd tracking or lock ownership'
+rm -f "$FM_TEST_STALE_GATE"
+fm_remote_job_wait_for_probe "$REMOTE_ROOT" "$ACCOUNT_HOME" \
+  || fail 'the same worker did not recover readiness after refresh resumed'
+pass 'stale readiness logs the named condition without reloading a verified launchd-tracked live owner'
 
 # --- a verified owner launchd no longer tracks is replaced identity-safely -----
 
