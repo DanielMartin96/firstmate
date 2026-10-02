@@ -1134,7 +1134,7 @@ fm_remote_job_worker_alive() { # <account-home>
   kill -0 "$pid" 2>/dev/null
 }
 
-fm_remote_job_probe() { # <account-home>; a fresh worker heartbeat or active job proves readiness
+fm_remote_job_probe() { # <account-home>; require a fresh heartbeat outside an active job
   local account_home=$1 ready lock mtime now
   [ "${FM_REMOTE_JOB_ACTIVE:-}" = 1 ] && return 0
   fm_remote_job_prepare_state "$account_home" || return 1
@@ -1305,10 +1305,12 @@ fm_remote_job_stale_heartbeat_owner() { # <account-home>
   FM_REMOTE_JOB_ERROR="remote job worker owns its lock but its ready heartbeat is stale"
 }
 
-# Runs only under the repair mutex, so every decision below is recomputed after
-# any earlier caller's repair and the mutex is held until the started worker
-# reports ready. A later caller therefore never mistakes a fresh spawn for a
-# dead worker, and never stops a replacement on a stale identity reading.
+# Hold the repair mutex across classification, replacement, and bounded startup
+# waits; recompute identity here rather than using a pre-mutex reading that could
+# stop another caller's replacement. A launchd-tracked live process gets a startup
+# wait even before publishing its lock, including after its repairing caller dies.
+# A verified live lock owner after a failed probe wait blocks timeout-driven
+# reloads; stale-code and untracked owners take the identity-safe stop path.
 fm_remote_job_repair_launchagent() { # <remote-root> <account-home> <uid>
   local root=$1 account_home=$2 uid=$3
   if ! fm_remote_job_launchagent_contract_matches "$root" "$account_home"; then

@@ -28,9 +28,12 @@
 # one second between passes. Work arriving after the four-pass burst may wait
 # for that quiet scan. Newly staged or cancelled work, a lane that died, an
 # orphaned claim, or an expired queue deadline can wait that interval plus
-# scan work and scheduling time. It refreshes the readiness heartbeat about once
-# per second, far inside the probe's 10-second freshness bound. The stale
-# sweep, whose state preparation also re-applies the queue directories' 0700
+# scan work and scheduling time. A separate heartbeat process refreshes readiness
+# about once per second, including during slow scans and sweeps, only while the
+# serving process is alive and its recorded lock ownership still verifies.
+# Losing lock ownership stops heartbeat refresh; losing the heartbeat process
+# while still owning the lock stops the serving loop on its next pass.
+# The stale sweep, whose state preparation also re-applies the queue directories' 0700
 # modes, runs at startup and then at most every 60 seconds, never more rarely
 # than the shortest record reap age.
 #
