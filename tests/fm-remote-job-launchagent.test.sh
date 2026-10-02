@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
-# Darwin ensure and LaunchAgent concurrency tests through the executable library.
+# Darwin ensure and LaunchAgent concurrency tests through the executable library
+# and worker. The launchctl stub models launchd: bootstrap loads the agent and
+# starts the worker without waiting for readiness, kickstart -k stops the
+# tracked worker before starting a new one, bootout stops the tracked worker,
+# and print reports the pid launchd tracks.
 set -u
 
+# shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 TMP_ROOT=$(fm_test_tmproot fm-remote-job-launchagent)
@@ -12,8 +17,7 @@ STATE_ROOT="$TMP_ROOT/state"
 STUB_BIN="$TMP_ROOT/stub-bin"
 LAUNCH_LOG="$TMP_ROOT/launchctl.log"
 SWEEP_GATE="$TMP_ROOT/sweep-gate"
-WORKER_PID=
-mkdir -p "$REMOTE_ROOT/bin" "$ACCOUNT_HOME" "$STUB_BIN" "$REMOTE_ROOT/.seq-claims/1"
+mkdir -p "$REMOTE_ROOT/bin" "$ACCOUNT_HOME" "$STUB_BIN"
 cp "$ROOT/bin/fm-remote-job-lib.sh" "$ROOT/bin/fm-remote-job-worker.sh" "$REMOTE_ROOT/bin/"
 printf 'fixture\n' > "$REMOTE_ROOT/AGENTS.md"
 chmod +x "$REMOTE_ROOT/bin/fm-remote-job-worker.sh"
@@ -22,16 +26,21 @@ git -C "$REMOTE_ROOT" config user.email test@example.com
 git -C "$REMOTE_ROOT" config user.name Test
 git -C "$REMOTE_ROOT" add AGENTS.md bin
 git -C "$REMOTE_ROOT" commit -qm 'launchagent fixture'
+
+# The first sequence-claim removal holds the real worker inside its sweep until
+# the test releases it, far beyond the probe's freshness bound and wait.
 REAL_RMDIR=$(command -v rmdir)
 cat > "$STUB_BIN/rmdir" <<'SH'
 #!/bin/bash
-printf 'rmdir %s\n' "$*" >> "$FM_TEST_STAT_LOG"
 last=${!#}
 case "$last" in
   */.seq-claims/[0-9]*)
     if [ -n "${FM_TEST_SWEEP_GATE:-}" ] && mkdir "$FM_TEST_SWEEP_GATE.once" 2>/dev/null; then
       : > "$FM_TEST_SWEEP_GATE"
-      /bin/sleep 12
+      for _ in $(seq 1 1200); do
+        [ -f "$FM_TEST_SWEEP_GATE.release" ] && break
+        /bin/sleep 0.05
+      done
     fi
     ;;
 esac
@@ -40,129 +49,219 @@ SH
 cat > "$STUB_BIN/launchctl" <<'SH'
 #!/bin/bash
 printf '%s\n' "$*" >> "$FM_TEST_LAUNCH_LOG"
+tracked_pid() {
+  local pid
+  pid=$(cat "$FM_TEST_TRACKED" 2>/dev/null) || return 1
+  kill -0 "$pid" 2>/dev/null || return 1
+  printf '%s\n' "$pid"
+}
+stop_tracked() {
+  local pid
+  pid=$(tracked_pid) || { rm -f "$FM_TEST_TRACKED"; return 0; }
+  kill -TERM "$pid" 2>/dev/null || true
+  for _ in $(seq 1 200); do
+    kill -0 "$pid" 2>/dev/null || break
+    /bin/sleep 0.05
+  done
+  rm -f "$FM_TEST_TRACKED"
+}
+# The tracked process sleeps before exec'ing the worker, so the spawn stays
+# unpublished for a moment after launchctl returns, as a slow startup does.
+start_worker() {
+  set -m
+  (
+    /bin/sleep 1
+    HOME="$FM_TEST_ACCOUNT" FM_ROOT_OVERRIDE="$FM_TEST_ROOT" \
+      FM_REMOTE_JOB_STATE_ROOT="$FM_TEST_STATE" FM_REMOTE_JOB_PLATFORM_OVERRIDE=Darwin \
+      exec "$FM_TEST_WORKER"
+  ) >> "$FM_TEST_WORKER_LOG" 2>&1 < /dev/null &
+  printf '%s\n' "$!" > "$FM_TEST_TRACKED"
+  set +m
+}
 case "${1:-}" in
   print)
     case "${2:-}" in
-      gui/[0-9]*)
-        if [[ "$2" == gui/*/dev.firstmate.remote-job ]]; then
-          [ -f "$FM_TEST_LOADED" ] || exit 1
-          printf '%s\n' "dev.firstmate.remote-job $FM_TEST_WORKER $FM_TEST_PLIST"
-        else
-          exit 0
-        fi
+      gui/*/dev.firstmate.remote-job)
+        [ -f "$FM_TEST_LOADED" ] || exit 113
+        printf 'path = %s\nprogram = %s\n' "$FM_TEST_PLIST" "$FM_TEST_WORKER"
+        if pid=$(tracked_pid); then printf '\tpid = %s\n' "$pid"; fi
+        printf 'label = dev.firstmate.remote-job\n'
         ;;
-      *) exit 1 ;;
+      gui/[0-9]*) exit 0 ;;
+      *) exit 113 ;;
     esac
     ;;
-  bootout) rm -f "$FM_TEST_LOADED" ;;
-  bootstrap) : > "$FM_TEST_LOADED" ;;
+  bootout)
+    [ -f "$FM_TEST_LOADED" ] || exit 113
+    stop_tracked
+    rm -f "$FM_TEST_LOADED"
+    ;;
+  bootstrap)
+    [ ! -f "$FM_TEST_LOADED" ] || { printf 'Bootstrap failed: 5: Input/output error\n' >&2; exit 5; }
+    : > "$FM_TEST_LOADED"
+    start_worker
+    ;;
   kickstart)
-    HOME="$FM_TEST_ACCOUNT" FM_ROOT_OVERRIDE="$FM_TEST_ROOT" \
-      FM_REMOTE_JOB_STATE_ROOT="$FM_TEST_STATE" FM_REMOTE_JOB_PLATFORM_OVERRIDE=Linux \
-      "$FM_TEST_WORKER" >> "$FM_TEST_WORKER_LOG" 2>&1 &
-    child=$!
-    for _ in $(seq 1 200); do
-      [ -f "$FM_TEST_STATE/worker.ready" ] && break
-      /bin/sleep 0.05
-    done
-    [ -f "$FM_TEST_STATE/worker.ready" ] || exit 1
+    [ -f "$FM_TEST_LOADED" ] || exit 113
+    stop_tracked
+    start_worker
     ;;
   *) exit 2 ;;
 esac
 SH
 chmod +x "$STUB_BIN/rmdir" "$STUB_BIN/launchctl"
 export PATH="$STUB_BIN:$PATH"
-export FM_TEST_REAL_RMDIR="$REAL_RMDIR" FM_TEST_LAUNCH_LOG="$LAUNCH_LOG" FM_TEST_STAT_LOG="$TMP_ROOT/rmdir.log"
+export FM_TEST_REAL_RMDIR="$REAL_RMDIR" FM_TEST_LAUNCH_LOG="$LAUNCH_LOG"
 export FM_TEST_ROOT="$REMOTE_ROOT" FM_TEST_ACCOUNT="$ACCOUNT_HOME"
 export FM_TEST_WORKER="$REMOTE_ROOT/bin/fm-remote-job-worker.sh"
 export FM_TEST_WORKER_LOG="$TMP_ROOT/worker.log" FM_TEST_STATE="$STATE_ROOT"
-export FM_TEST_LOADED="$TMP_ROOT/launchagent.loaded"
+export FM_TEST_LOADED="$TMP_ROOT/launchagent.loaded" FM_TEST_TRACKED="$TMP_ROOT/launchagent.pid"
 export FM_TEST_PLIST="$ACCOUNT_HOME/Library/LaunchAgents/dev.firstmate.remote-job.plist"
 export FM_TEST_SWEEP_GATE="$SWEEP_GATE"
+export FM_REMOTE_JOB_STATE_ROOT="$STATE_ROOT" FM_REMOTE_JOB_PLATFORM_OVERRIDE=Darwin
+# shellcheck source=bin/fm-remote-job-lib.sh
+. "$ROOT/bin/fm-remote-job-lib.sh"
+
+stop_pid() {
+  local pid=$1
+  case "$pid" in ''|*[!0-9]*) return 0 ;; esac
+  kill -0 "$pid" 2>/dev/null || return 0
+  fm_remote_job_stop_worker_tree "$pid" >/dev/null 2>&1 || true
+}
 
 cleanup() {
-  if [ -n "$WORKER_PID" ]; then
-    fm_remote_job_stop_worker_tree "$WORKER_PID" >/dev/null 2>&1 || true
-  fi
-  if [ -f "$STATE_ROOT/worker.lock/pid" ]; then
-    fm_remote_job_stop_worker_tree "$(cat "$STATE_ROOT/worker.lock/pid")" >/dev/null 2>&1 || true
-  fi
+  : > "$SWEEP_GATE.release" 2>/dev/null || true
+  stop_pid "$(cat "$FM_TEST_TRACKED" 2>/dev/null)"
+  stop_pid "$(cat "$STATE_ROOT/worker.lock/pid" 2>/dev/null)"
+  stop_pid "${ORPHAN_PID:-}"
   rm -rf -- "$TMP_ROOT"
 }
 trap cleanup EXIT
 
-export FM_REMOTE_JOB_STATE_ROOT="$STATE_ROOT" FM_REMOTE_JOB_PLATFORM_OVERRIDE=Linux
-. "$ROOT/bin/fm-remote-job-lib.sh"
-fm_remote_job_prepare_state "$ACCOUNT_HOME"
-fm_remote_job_write_launchagent "$REMOTE_ROOT" "$ACCOUNT_HOME"
+ensure_darwin() (
+  fm_remote_job_ensure_worker "$REMOTE_ROOT" "$ACCOUNT_HOME" || {
+    printf 'ensure failed: %s\n' "$FM_REMOTE_JOB_ERROR" >&2
+    exit 1
+  }
+)
+
+tracked() { cat "$FM_TEST_TRACKED" 2>/dev/null; }
+lock_owner() { cat "$STATE_ROOT/worker.lock/pid" 2>/dev/null; }
+launch_count() { grep -c "^$1 " "$LAUNCH_LOG" 2>/dev/null || true; }
+
+# --- a slow sequence-claim sweep must not trigger a LaunchAgent reload -------
+
+fm_remote_job_prepare_state "$ACCOUNT_HOME" || fail 'could not prepare remote job state'
+fm_remote_job_write_launchagent "$REMOTE_ROOT" "$ACCOUNT_HOME" || fail 'could not write the LaunchAgent'
 mkdir -p "$STATE_ROOT/.seq-claims/1"
 touch -t 200001010000 "$STATE_ROOT/.seq-claims/1"
-: > "$FM_TEST_LOADED"
-HOME="$ACCOUNT_HOME" FM_ROOT_OVERRIDE="$REMOTE_ROOT" FM_REMOTE_JOB_STATE_ROOT="$STATE_ROOT" \
-  FM_REMOTE_JOB_PLATFORM_OVERRIDE=Linux FM_TEST_SWEEP_GATE="$SWEEP_GATE" \
-  "$FM_TEST_WORKER" > "$TMP_ROOT/sweep-worker.log" 2>&1 &
-WORKER_PID=$!
+launchctl bootstrap "gui/$(id -u)" "$FM_TEST_PLIST" || fail 'the stub launchd did not load the agent'
+SWEEP_PID=$(tracked)
 for _ in $(seq 1 200); do
-  [ -f "$SWEEP_GATE" ] && [ -f "$STATE_ROOT/worker.ready" ] && break
+  [ -f "$SWEEP_GATE" ] && break
   /bin/sleep 0.05
 done
-[ -f "$SWEEP_GATE" ] || { printf 'worker log:\n'; cat "$TMP_ROOT/sweep-worker.log"; printf 'rmdir log:\n'; cat "$TMP_ROOT/rmdir.log"; printf 'state:\n'; ls -la "$STATE_ROOT"; ps -p "$WORKER_PID" -o pid=,stat=,command= || true; fail 'the real worker did not enter its sequence-claim sweep'; }
-[ -f "$STATE_ROOT/worker.ready" ] || fail 'the worker did not publish readiness before its slow sweep'
+[ -f "$SWEEP_GATE" ] || { cat "$FM_TEST_WORKER_LOG"; fail 'the real worker did not enter its sequence-claim sweep'; }
+[ "$(lock_owner)" = "$SWEEP_PID" ] || fail 'the launchd-tracked worker does not own the worker lock'
+# Outlast the probe's 10-second freshness bound while the main loop is blocked.
 /bin/sleep 11
-if ! ( FM_REMOTE_JOB_STATE_ROOT="$STATE_ROOT" FM_REMOTE_JOB_PLATFORM_OVERRIDE=Darwin \
-  fm_remote_job_ensure_worker "$REMOTE_ROOT" "$ACCOUNT_HOME" ); then
-  fail "ensure failed during a slow sequence-claim sweep: $FM_REMOTE_JOB_ERROR"
-fi
-! grep -q '^bootout ' "$LAUNCH_LOG" || fail 'ensure booted out a healthy worker during the slow sweep'
-pass 'a slow sequence-claim sweep keeps readiness fresh and cannot trigger a LaunchAgent bootout'
-/bin/sleep 2
-
-# A clean LaunchAgent start followed by concurrent ensures must have one reload
-# sequence; the second caller rechecks readiness after acquiring the mutex.
-fm_remote_job_stop_worker_tree "$WORKER_PID" || fail 'the sweep fixture worker did not stop'
-WORKER_PID=
-rm -rf -- "$STATE_ROOT" "$ACCOUNT_HOME/Library" "$FM_TEST_LOADED" "$LAUNCH_LOG"
-mkdir -p "$ACCOUNT_HOME"
-fm_remote_job_prepare_state "$ACCOUNT_HOME"
-ensure_darwin() (
-  FM_REMOTE_JOB_STATE_ROOT="$STATE_ROOT" FM_REMOTE_JOB_PLATFORM_OVERRIDE=Darwin \
-    fm_remote_job_ensure_worker "$REMOTE_ROOT" "$ACCOUNT_HOME"
-)
-ensure_darwin > "$TMP_ROOT/ensure-a.out" 2>&1 &
-first=$!
-ensure_darwin > "$TMP_ROOT/ensure-b.out" 2>&1 &
-second=$!
-if ! wait "$first"; then cat "$TMP_ROOT/ensure-a.out" "$TMP_ROOT/ensure-b.out"; fail 'the first concurrent Darwin ensure failed'; fi
-if ! wait "$second"; then cat "$TMP_ROOT/ensure-a.out" "$TMP_ROOT/ensure-b.out"; fail 'the second concurrent Darwin ensure failed'; fi
-[ "$(grep -c '^bootout ' "$LAUNCH_LOG")" -eq 1 ] \
-  || fail 'concurrent callers ran multiple LaunchAgent bootouts'
-[ "$(grep -c '^bootstrap ' "$LAUNCH_LOG")" -eq 1 ] \
-  || fail 'concurrent callers bootstrapped the agent more than once'
-[ "$(grep -c '^kickstart ' "$LAUNCH_LOG")" -eq 1 ] \
-  || fail 'concurrent callers kickstarted multiple workers'
-WORKER_PID=$(cat "$STATE_ROOT/worker.pid")
-pass 'concurrent Darwin ensures serialize reloads and adopt the first fresh worker'
-
-# Model an orphan that remains a verified live lock owner after its code changes
-# and is absent from launchd's service record.
-old_pid=$WORKER_PID
-printf '\n# updated fixture code\n' >> "$REMOTE_ROOT/bin/fm-remote-job-worker.sh"
-git -C "$REMOTE_ROOT" add bin/fm-remote-job-worker.sh
-git -C "$REMOTE_ROOT" commit -qm 'updated worker identity'
-rm -f "$FM_TEST_LOADED"
 : > "$LAUNCH_LOG"
-if ! ( FM_REMOTE_JOB_STATE_ROOT="$STATE_ROOT" FM_REMOTE_JOB_PLATFORM_OVERRIDE=Darwin \
-  fm_remote_job_ensure_worker "$REMOTE_ROOT" "$ACCOUNT_HOME" ); then
-  fail "Darwin did not recover the verified orphaned worker: $FM_REMOTE_JOB_ERROR"
-fi
-new_pid=$(cat "$STATE_ROOT/worker.pid")
-[ "$new_pid" != "$old_pid" ] || fail 'Darwin retained the orphan running stale code'
-! kill -0 "$old_pid" 2>/dev/null || fail 'the stale orphan remained alive after identity-safe replacement'
-[ "$(grep -c '^bootout ' "$LAUNCH_LOG")" -eq 1 ] \
-  || fail 'orphan recovery did not perform exactly one LaunchAgent bootout'
+ensure_darwin > "$TMP_ROOT/ensure-sweep.out" 2>&1 \
+  || { cat "$TMP_ROOT/ensure-sweep.out"; fail 'ensure failed while the worker was inside a slow sweep'; }
+[ ! -f "$SWEEP_GATE.release" ] || fail 'the sweep ended before ensure observed it'
+[ "$(launch_count bootout)" -eq 0 ] || fail 'ensure booted out a healthy worker during its slow sweep'
+kill -0 "$SWEEP_PID" 2>/dev/null || fail 'the sweeping worker was killed'
+[ "$(tracked)" = "$SWEEP_PID" ] && [ "$(lock_owner)" = "$SWEEP_PID" ] \
+  || fail 'the sweeping worker lost launchd tracking or worker ownership'
+: > "$SWEEP_GATE.release"
+pass 'a slow sequence-claim sweep keeps readiness fresh and cannot trigger a LaunchAgent bootout'
+
+# --- concurrent callers cannot bootout-war a fresh asynchronous spawn ----------
+
+launchctl bootout "gui/$(id -u)/dev.firstmate.remote-job" || fail 'the stub launchd did not unload the agent'
+! kill -0 "$SWEEP_PID" 2>/dev/null || fail 'bootout did not stop the tracked worker'
+: > "$LAUNCH_LOG"
+CALLERS=()
+for caller in 1 2 3; do
+  ensure_darwin > "$TMP_ROOT/ensure-$caller.out" 2>&1 &
+  CALLERS+=("$!")
+done
+for caller_pid in "${CALLERS[@]}"; do
+  wait "$caller_pid" || { cat "$TMP_ROOT"/ensure-*.out; fail 'a concurrent Darwin ensure failed'; }
+done
+[ "$(launch_count bootout)" -eq 1 ] || { cat "$LAUNCH_LOG"; fail 'concurrent callers ran more than one LaunchAgent bootout'; }
+[ "$(launch_count bootstrap)" -eq 1 ] || { cat "$LAUNCH_LOG"; fail 'concurrent callers bootstrapped the agent more than once'; }
+[ "$(launch_count kickstart)" -eq 1 ] || { cat "$LAUNCH_LOG"; fail 'concurrent callers kickstarted more than one worker'; }
+FRESH_PID=$(tracked)
+kill -0 "$FRESH_PID" 2>/dev/null || fail 'no tracked worker survived the concurrent ensures'
+[ "$(lock_owner)" = "$FRESH_PID" ] || fail 'the surviving worker lock owner is not the launchd-tracked worker'
+pass 'concurrent Darwin ensures serialize one reload and adopt its fresh worker'
+
+# --- a verified owner launchd no longer tracks is replaced identity-safely -----
+
+# launchd lost the worker while it kept the lock, then code changed under it.
+ORPHAN_PID=$FRESH_PID
+rm -f "$FM_TEST_TRACKED"
+printf '\n# updated fixture code\n' >> "$REMOTE_ROOT/bin/fm-remote-job-worker.sh"
+git -C "$REMOTE_ROOT" commit -qam 'updated worker identity'
+: > "$LAUNCH_LOG"
+ensure_darwin > "$TMP_ROOT/ensure-orphan.out" 2>&1 \
+  || { cat "$TMP_ROOT/ensure-orphan.out"; fail 'Darwin did not recover the untracked stale-code owner'; }
+! kill -0 "$ORPHAN_PID" 2>/dev/null || fail 'the untracked stale-code owner remained alive'
+REPLACEMENT_PID=$(tracked)
+[ -n "$REPLACEMENT_PID" ] && [ "$REPLACEMENT_PID" != "$ORPHAN_PID" ] && [ "$(lock_owner)" = "$REPLACEMENT_PID" ] \
+  || fail 'the replacement worker is not the launchd-tracked lock owner'
 fm_remote_job_worker_identity_matches "$REMOTE_ROOT" "$ACCOUNT_HOME" \
   || fail 'the replacement worker identity does not match current code'
-WORKER_PID=$new_pid
-pass 'Darwin stops a verified untracked stale-code owner and starts the current worker'
+pass 'Darwin stops an untracked stale-code owner and starts the current worker through launchd'
+
+# The agent stays loaded but launchd tracks no process, as when its own spawn
+# exited because the orphan still held the worker lock. Current code alone must
+# not let the orphan keep the service.
+ORPHAN_PID=$REPLACEMENT_PID
+rm -f "$FM_TEST_TRACKED"
+: > "$LAUNCH_LOG"
+ensure_darwin > "$TMP_ROOT/ensure-loaded-orphan.out" 2>&1 \
+  || { cat "$TMP_ROOT/ensure-loaded-orphan.out"; fail 'Darwin did not recover the untracked current-code owner'; }
+! kill -0 "$ORPHAN_PID" 2>/dev/null || fail 'the untracked current-code owner remained alive'
+REPLACEMENT_PID=$(tracked)
+[ -n "$REPLACEMENT_PID" ] && [ "$(lock_owner)" = "$REPLACEMENT_PID" ] \
+  || fail 'the loaded agent did not regain a launchd-tracked lock owner'
+pass 'Darwin replaces a current-code owner that the loaded agent does not track'
+
+# --- a dead repair-lock holder is reclaimed by exactly one caller ------------
+
+# A killed caller left its lock; two later callers must not both reclaim it.
+DEAD_HOLDER=$(bash -c 'printf "%s\n" "$$"')
+DEAD_NAME=launchagent.repair.owner.$DEAD_HOLDER.1
+mkdir "$STATE_ROOT/$DEAD_NAME"
+printf '%s\n' "$DEAD_HOLDER" > "$STATE_ROOT/$DEAD_NAME/pid"
+printf 'gone\n' > "$STATE_ROOT/$DEAD_NAME/start"
+printf 'gone\n' > "$STATE_ROOT/$DEAD_NAME/command"
+ln -s "$DEAD_NAME" "$STATE_ROOT/launchagent.repair"
+HOLD_LOG="$TMP_ROOT/hold.log"
+: > "$HOLD_LOG"
+hold_lock() (
+  fm_remote_job_prepare_state "$ACCOUNT_HOME" || exit 1
+  fm_remote_job_reload_lock_acquire "$STATE_ROOT/launchagent.repair" || exit 1
+  printf 'enter %s\n' "$1" >> "$HOLD_LOG"
+  /bin/sleep 1
+  printf 'leave %s\n' "$1" >> "$HOLD_LOG"
+  fm_remote_job_reload_lock_release "$STATE_ROOT/launchagent.repair"
+)
+hold_lock a & HOLD_A=$!
+hold_lock b & HOLD_B=$!
+wait "$HOLD_A" || fail 'the first reclaiming caller did not acquire the repair lock'
+wait "$HOLD_B" || fail 'the second reclaiming caller did not acquire the repair lock'
+[ "$(sed -n 1p "$HOLD_LOG" | cut -d' ' -f1)$(sed -n 2p "$HOLD_LOG" | cut -d' ' -f1)" = enterleave ] \
+  && [ "$(sed -n 3p "$HOLD_LOG" | cut -d' ' -f1)$(sed -n 4p "$HOLD_LOG" | cut -d' ' -f1)" = enterleave ] \
+  || { cat "$HOLD_LOG"; fail 'two callers held the reclaimed repair lock at once'; }
+[ ! -e "$STATE_ROOT/launchagent.repair" ] && [ ! -L "$STATE_ROOT/launchagent.repair" ] \
+  || fail 'the repair lock was not released'
+for leftover in "$STATE_ROOT"/launchagent.repair.*; do
+  [ -e "$leftover" ] || [ -L "$leftover" ] || continue
+  fail "repair lock records were left behind: $leftover"
+done
+pass 'a dead repair-lock holder is reclaimed by one caller at a time'
 
 printf 'ALL TESTS PASSED\n'
