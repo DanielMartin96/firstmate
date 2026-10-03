@@ -106,10 +106,16 @@ case "${1:-}" in
   bootout)
     [ -f "$FM_TEST_LOADED" ] || exit 113
     stop_tracked
-    rm -f "$FM_TEST_LOADED"
+    if [ "${FM_TEST_ASYNC_BOOTOUT:-0}" -eq 1 ]; then
+      : > "$FM_TEST_REMOVING"
+      nohup /bin/sh -c 'sleep "$1"; rm -f "$2" "$3"' sh "${FM_TEST_BOOTOUT_DELAY:-1}" "$FM_TEST_LOADED" "$FM_TEST_REMOVING" \
+        </dev/null >/dev/null 2>&1 &
+    else
+      rm -f "$FM_TEST_LOADED"
+    fi
     ;;
   bootstrap)
-    [ ! -f "$FM_TEST_LOADED" ] || { printf 'Bootstrap failed: 5: Input/output error\n' >&2; exit 5; }
+    [ ! -f "$FM_TEST_LOADED" ] && [ ! -f "$FM_TEST_REMOVING" ] || { printf 'Bootstrap failed: 5: Input/output error\n' >&2; exit 5; }
     : > "$FM_TEST_LOADED"
     start_worker
     ;;
@@ -129,6 +135,7 @@ export FM_TEST_ROOT="$REMOTE_ROOT" FM_TEST_ACCOUNT="$ACCOUNT_HOME"
 export FM_TEST_WORKER="$REMOTE_ROOT/bin/fm-remote-job-worker.sh"
 export FM_TEST_WORKER_LOG="$TMP_ROOT/worker.log" FM_TEST_STATE="$STATE_ROOT"
 export FM_TEST_LOADED="$TMP_ROOT/launchagent.loaded" FM_TEST_TRACKED="$TMP_ROOT/launchagent.pid"
+export FM_TEST_REMOVING="$TMP_ROOT/launchagent.removing"
 export FM_TEST_PLIST="$ACCOUNT_HOME/Library/LaunchAgents/dev.firstmate.remote-job.plist"
 export FM_TEST_SWEEP_GATE="$SWEEP_GATE"
 export FM_REMOTE_JOB_STATE_ROOT="$STATE_ROOT" FM_REMOTE_JOB_PLATFORM_OVERRIDE=Darwin
@@ -355,5 +362,27 @@ for leftover in "$STATE_ROOT"/launchagent.repair.*; do
   fail "repair lock records were left behind: $leftover"
 done
 pass 'a dead repair-lock holder is reclaimed by one caller at a time'
+
+# --- wait for Darwin bootout cleanup before bootstrapping the same label -----
+
+: > "$LAUNCH_LOG"
+FM_TEST_ASYNC_BOOTOUT=1 FM_TEST_BOOTOUT_DELAY=1
+export FM_TEST_ASYNC_BOOTOUT FM_TEST_BOOTOUT_DELAY
+OLD_PID=$(tracked)
+START=$SECONDS
+fm_remote_job_reload_launchagent "$ACCOUNT_HOME" "$(id -u)" \
+  || fail "Darwin reload failed while bootout cleanup was pending: ${FM_REMOTE_JOB_ERROR:-no diagnostic}"
+ELAPSED=$((SECONDS - START))
+NEW_PID=$(tracked)
+[ -n "$NEW_PID" ] && [ "$NEW_PID" != "$OLD_PID" ] \
+  || fail 'the async bootout reload did not replace the tracked worker'
+[ "$(launch_count bootout)" -eq 1 ] && [ "$(launch_count bootstrap)" -eq 1 ] && [ "$(launch_count kickstart)" -eq 1 ] \
+  || { cat "$LAUNCH_LOG"; fail 'the async bootout reload did not perform exactly one bootout/bootstrap/kickstart'; }
+fm_remote_job_wait_for_probe "$REMOTE_ROOT" "$ACCOUNT_HOME" \
+  || { cat "$WORKER_LOG"; fail 'the replacement worker did not become ready after async bootout cleanup'; }
+[ "$(tracked)" = "$NEW_PID" ] && [ "$(lock_owner)" = "$NEW_PID" ] \
+  || fail 'launchd tracking and worker ownership diverged after async bootout cleanup'
+[ ! -e "$FM_TEST_REMOVING" ] || fail 'launchd removal remained pending after successful bootstrap'
+pass "Darwin reload waits for asynchronous bootout cleanup before bootstrap (${ELAPSED}s)"
 
 printf 'ALL TESTS PASSED\n'

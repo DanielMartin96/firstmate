@@ -1286,9 +1286,17 @@ fm_remote_job_launchagent_owner_current() { # <remote-root> <account-home> <uid>
 }
 
 fm_remote_job_reload_launchagent() { # <account-home> <uid>
-  local account_home=$1 uid=$2 out
+  local account_home=$1 uid=$2 out i=0
   fm_remote_job_launchagent_paths "$account_home"
   launchctl bootout "gui/$uid/$FM_REMOTE_JOB_LABEL" >/dev/null 2>&1 || true
+  while launchctl print "gui/$uid/$FM_REMOTE_JOB_LABEL" >/dev/null 2>&1; do
+    if [ "$i" -ge 100 ]; then
+      FM_REMOTE_JOB_ERROR="timed out waiting for launchd to finish removing $FM_REMOTE_JOB_LABEL after bootout"
+      return 1
+    fi
+    i=$((i + 1))
+    sleep 0.1
+  done
   if ! out=$(launchctl bootstrap "gui/$uid" "$FM_REMOTE_JOB_LAUNCH_AGENT_PLIST" 2>&1); then
     FM_REMOTE_JOB_ERROR="launchctl bootstrap gui/$uid refused: ${out:-no diagnostic}"
     return 1
