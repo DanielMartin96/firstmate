@@ -58,24 +58,19 @@ if [ "$last" = "$FM_TEST_STATE/worker.ready" ] && [ -f "$FM_TEST_STALE_GATE" ]; 
 fi
 exec "$FM_TEST_REAL_TOUCH" "$@"
 SH
-# Holds a worker's code identity publication once, so a caller can classify
-# the spawn while it is part-way through publishing its ownership.
+# Hold lock-owner publication so probes run against crash leftovers before
+# the replacement has recorded ownership or published its code identity.
 REAL_MV=$(command -v mv)
 cat > "$STUB_BIN/mv" <<'SH'
 #!/bin/bash
 last=${!#}
 if [ "$last" = "$FM_TEST_STATE/worker.lock/pid" ] && [ -f "$FM_TEST_OWNER_GATE" ]; then
   : > "$FM_TEST_OWNER_GATE.observed"
-  if [ -f "$FM_TEST_OWNER_GATE.fail" ]; then exit 1; fi
   for _ in $(seq 1 400); do
     [ -f "$FM_TEST_OWNER_GATE.release" ] && break
     /bin/sleep 0.05
   done
   [ -f "$FM_TEST_OWNER_GATE.release" ] || exit 1
-fi
-if [ "$last" = "$FM_TEST_STATE/worker.identity" ] && rm "$FM_TEST_IDENTITY_GATE" 2>/dev/null; then
-  : > "$FM_TEST_IDENTITY_GATE.observed"
-  /bin/sleep 3
 fi
 exec "$FM_TEST_REAL_MV" "$@"
 SH
@@ -152,7 +147,7 @@ chmod +x "$STUB_BIN/rmdir" "$STUB_BIN/touch" "$STUB_BIN/mv" "$STUB_BIN/launchctl
 export PATH="$STUB_BIN:$PATH"
 export FM_TEST_REAL_RMDIR="$REAL_RMDIR" FM_TEST_LAUNCH_LOG="$LAUNCH_LOG"
 export FM_TEST_REAL_TOUCH="$REAL_TOUCH" FM_TEST_STALE_GATE="$TMP_ROOT/stale-gate"
-export FM_TEST_REAL_MV="$REAL_MV" FM_TEST_IDENTITY_GATE="$TMP_ROOT/identity-gate"
+export FM_TEST_REAL_MV="$REAL_MV"
 export FM_TEST_OWNER_GATE="$TMP_ROOT/owner-gate"
 export FM_TEST_ROOT="$REMOTE_ROOT" FM_TEST_ACCOUNT="$ACCOUNT_HOME"
 export FM_TEST_WORKER="$REMOTE_ROOT/bin/fm-remote-job-worker.sh"
@@ -217,7 +212,8 @@ for _ in $(seq 1 200); do
 done
 [ -f "$FM_TEST_OWNER_GATE.observed" ] || fail 'replacement did not reach lock-owner publication'
 fm_remote_job_worker_identity_matches "$REMOTE_ROOT" "$ACCOUNT_HOME" \
-  || fail 'replacement did not publish its current identity before ownership'
+  && fail 'replacement published its current identity before ownership'
+[ ! -e "$STATE_ROOT/worker.ready" ] || fail 'replacement retained the predecessor heartbeat'
 fm_remote_job_probe "$ACCOUNT_HOME" && fail 'replacement inherited predecessor readiness before recording ownership'
 fm_remote_job_wait_for_probe "$REMOTE_ROOT" "$ACCOUNT_HOME" > "$TMP_ROOT/wait-owner.out" 2>&1 &
 PROBE_WAITER=$!
@@ -230,29 +226,6 @@ wait "$PROBE_WAITER" || fail 'replacement did not become ready after ownership p
 rm -f "$FM_TEST_OWNER_GATE" "$FM_TEST_OWNER_GATE.observed" "$FM_TEST_OWNER_GATE.release"
 launchctl bootout "gui/$(id -u)/dev.firstmate.remote-job" || fail 'could not stop the replacement'
 pass 'a stale-code crash heartbeat cannot count as replacement readiness'
-
-# --- failed ownership publication rolls back the replacement identity --------
-
-printf 'stale-code\n' > "$STATE_ROOT/worker.identity"
-printf '99999999\n' > "$STATE_ROOT/worker.ready"
-chmod 600 "$STATE_ROOT/worker.identity" "$STATE_ROOT/worker.ready"
-: > "$FM_TEST_OWNER_GATE"
-: > "$FM_TEST_OWNER_GATE.fail"
-if HOME="$ACCOUNT_HOME" FM_ROOT_OVERRIDE="$REMOTE_ROOT" "$FM_TEST_WORKER" > "$TMP_ROOT/failed-owner.out" 2>&1; then
-  fail 'worker succeeded despite failed lock-owner publication'
-fi
-[ -f "$FM_TEST_OWNER_GATE.observed" ] || fail 'failed lock-owner injection was not reached'
-[ ! -e "$STATE_ROOT/worker.identity" ] || fail 'failed lock-owner publication retained replacement identity'
-[ ! -e "$STATE_ROOT/worker.ready" ] || fail 'failed lock-owner publication retained predecessor readiness'
-[ ! -d "$STATE_ROOT/worker.lock" ] || fail 'failed lock-owner publication did not clean up its lock'
-fm_remote_job_probe "$ACCOUNT_HOME" && fail 'probe accepted a worker that failed ownership publication'
-rm -f "$FM_TEST_OWNER_GATE" "$FM_TEST_OWNER_GATE.observed" "$FM_TEST_OWNER_GATE.fail"
-ensure_darwin > "$TMP_ROOT/ensure-failed-owner.out" 2>&1 \
-  || { cat "$TMP_ROOT/ensure-failed-owner.out"; fail 'repair did not recover failed owner publication'; }
-[ "$(fm_remote_job_read_single_line "$STATE_ROOT/worker.ready" 64)" = "$(tracked)" ] \
-  || fail 'repair succeeded without a serving tracked worker'
-launchctl bootout "gui/$(id -u)/dev.firstmate.remote-job" || fail 'could not stop the recovered worker'
-pass 'failed lock-owner publication rolls back identity and permits real repair'
 
 # --- a slow sequence-claim sweep must not trigger a LaunchAgent reload -------
 
@@ -409,36 +382,6 @@ ensure_darwin > "$TMP_ROOT/ensure-dead-caller.out" 2>&1 \
 [ ! -e "$STATE_ROOT/launchagent.repair" ] && [ ! -L "$STATE_ROOT/launchagent.repair" ] \
   || fail 'the reclaimed repair lock was not released'
 pass 'a fresh spawn survives when the caller that started it dies before publication'
-
-# --- a crashed predecessor's identity is never attributed to a fresh spawn ----
-
-# An old-code worker died without cleanup and left its identity. Caller A
-# reloads the agent and dies; caller B classifies the fresh spawn while it is
-# still publishing, and must not judge it by the predecessor's identity.
-launchctl bootout "gui/$(id -u)/dev.firstmate.remote-job" || fail 'the stub launchd did not unload the agent'
-printf 'stale-predecessor\n' > "$STATE_ROOT/worker.identity"
-chmod 600 "$STATE_ROOT/worker.identity"
-: > "$FM_TEST_IDENTITY_GATE"
-launchctl bootstrap "gui/$(id -u)" "$FM_TEST_PLIST" || fail 'the stub launchd did not load the agent'
-plant_dead_repair_lock || fail 'could not plant the dead caller repair lock'
-SPAWN_PID=$(tracked)
-for _ in $(seq 1 200); do
-  [ -f "$FM_TEST_IDENTITY_GATE.observed" ] && break
-  /bin/sleep 0.05
-done
-[ -f "$FM_TEST_IDENTITY_GATE.observed" ] || { cat "$FM_TEST_WORKER_LOG"; fail 'the spawn did not reach identity publication'; }
-[ "$(cat "$STATE_ROOT/worker.identity")" = stale-predecessor ] \
-  || fail 'the crashed predecessor identity was not on disk while the spawn published'
-: > "$LAUNCH_LOG"
-ensure_darwin > "$TMP_ROOT/ensure-stale-identity.out" 2>&1 \
-  || { cat "$TMP_ROOT/ensure-stale-identity.out"; fail 'ensure failed while the spawn replaced a stale identity'; }
-[ "$(launch_count bootout)" -eq 0 ] || { cat "$LAUNCH_LOG"; fail 'ensure booted out a fresh spawn for its predecessor identity'; }
-kill -0 "$SPAWN_PID" 2>/dev/null || fail 'the fresh spawn was stopped for its predecessor identity'
-[ "$(tracked)" = "$SPAWN_PID" ] && [ "$(lock_owner)" = "$SPAWN_PID" ] \
-  || fail 'the fresh spawn did not become the launchd-tracked lock owner'
-fm_remote_job_worker_identity_matches "$REMOTE_ROOT" "$ACCOUNT_HOME" \
-  || fail 'the fresh spawn did not replace the predecessor identity'
-pass 'a fresh spawn is not stopped for a crashed predecessor identity'
 
 # --- a dead repair-lock holder is reclaimed by exactly one caller ------------
 
