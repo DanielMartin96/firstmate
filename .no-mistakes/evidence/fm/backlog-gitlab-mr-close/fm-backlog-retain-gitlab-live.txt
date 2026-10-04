@@ -1,0 +1,21 @@
+== fm_backlog_retain (captain-held row kept open) with real tasks-axi ==
+### BASE GitLab MR url=https://gitlab.com/group/sub/project/-/merge_requests/1663
+fm_backlog_retain rc=1 err=error: "--pr must be a canonical pull request URL: https://github.com/<owner>/<repo>/pull/<n> (GitHub) or https://<host>/<owner>/<repo>/pulls/<n> (Forgejo)"
+  state: in_flight
+  links: none
+  body: "Deliverable of the finished work: PR https://gitlab.com/group/sub/project/-/merge_requests/1663"
+### TARGET GitLab MR url=https://gitlab.com/group/sub/project/-/merge_requests/1663
+fm_backlog_retain rc=0 err=<none>
+  state: queued
+  links: none
+  body: "Deliverable of the finished work: GitLab merge request https://gitlab.com/group/sub/project/-/merge_requests/1663"
+### TARGET Gerrit url=https://gerrit.example.com/c/project/+/12345
+fm_backlog_retain rc=0 err=<none>
+  state: queued
+  links: none
+  body: "Deliverable of the finished work: Gerrit change https://gerrit.example.com/c/project/+/12345"
+### TARGET GitHub url=https://github.com/example/repo/pull/7
+fm_backlog_retain rc=0 err=<none>
+  state: queued
+  links: "pr:https://github.com/example/repo/pull/7"
+  body: "Deliverable of the finished work: PR https://github.com/example/repo/pull/7"

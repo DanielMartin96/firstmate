@@ -1,0 +1,2 @@
+ok - an answer before cleanup replay notes the retained Gerrit change
+ok - cleanup keeps a captain-held Gerrit task open and records its GitLab MR URL (scratch)

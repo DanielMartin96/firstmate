@@ -1,0 +1,35 @@
+== real tasks-axi 0.2.6, disposable backlog files under $TMPDIR ==
+== Direct tasks-axi done --pr <GitLab MR> (the refusal being worked around) ==
+error: "Task pr link must be a canonical pull request URL: https://github.com/<owner>/<repo>/pull/<n> (GitHub) or https://<host>/<owner>/<repo>/pulls/<n> (Forgejo)"
+code: VALIDATION_ERROR
+rc=2
+### BASE 42dd906 GitLab MR (expect refused, stays in_flight) url=https://gitlab.com/group/sub/project/-/merge_requests/1663
+fm_backlog_done rc=2 err=error: "Task pr link must be a canonical pull request URL: https://github.com/<owner>/<repo>/pull/<n> (GitHub) or https://<host>/<owner>/<repo>/pulls/<n> (Forgejo)"
+  state: in_flight
+  links: none
+  body: ""
+### TARGET db172fe GitLab MR (expect done + note) url=https://gitlab.com/group/sub/project/-/merge_requests/1663
+fm_backlog_done rc=0 err=<none>
+  state: done
+  links: none
+  body: "GitLab merge request https://gitlab.com/group/sub/project/-/merge_requests/1663"
+### TARGET self-hosted GitLab MR url=https://gitlab.example.org/team/app/-/merge_requests/5
+fm_backlog_done rc=0 err=<none>
+  state: done
+  links: none
+  body: "GitLab merge request https://gitlab.example.org/team/app/-/merge_requests/5"
+### TARGET Gerrit (note text unchanged) url=https://gerrit.example.com/c/project/+/12345
+fm_backlog_done rc=0 err=<none>
+  state: done
+  links: none
+  body: "Gerrit change https://gerrit.example.com/c/project/+/12345"
+### TARGET GitHub (still --pr link) url=https://github.com/example/repo/pull/7
+fm_backlog_done rc=0 err=<none>
+  state: done
+  links: "pr:https://github.com/example/repo/pull/7"
+  body: ""
+### TARGET adversarial: GitLab issue URL (not an MR, must not be noted) url=https://gitlab.com/group/project/-/issues/9
+fm_backlog_done rc=2 err=error: "Task pr link must be a canonical pull request URL: https://github.com/<owner>/<repo>/pull/<n> (GitHub) or https://<host>/<owner>/<repo>/pulls/<n> (Forgejo)"
+  state: in_flight
+  links: none
+  body: ""

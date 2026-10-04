@@ -1,0 +1,3 @@
+fm-captain-hold: cannot apply the artifact recorded for sample-answer-before-replay-gerrit in /private/var/folders/sj/wkdqwx054mb5c2ffqzxr7yvh0000gn/T/fm-captain-hold.FJvhi5/answer-before-replay-gerrit/state/sample-answer-before-replay-gerrit.backlog-close: error: "Task pr link must be a canonical pull request URL"
+fm-captain-hold: could not close answered captain-held task sample-answer-before-replay-gerrit
+not ok - the captain could not answer a Gerrit task before cleanup replay
