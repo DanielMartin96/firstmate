@@ -216,11 +216,17 @@ worker_acquire_lock() { # <account-home> <identity>
   while [ "$attempt" -lt 150 ]; do
     if (umask 077; mkdir "$WORKER_LOCK") 2>/dev/null; then
       WORKER_LOCK_HELD=1
+      # Discard the predecessor's heartbeat before publishing our identity:
+      # readiness must come from this owner after lock publication succeeds.
+      rm -f -- "$(fm_remote_job_worker_ready_path)" || return 1
       # Publish identity before verifiable ownership so repair cannot attribute a
       # crashed predecessor's retained identity to this fresh launchd spawn.
       # tests/fm-remote-job-launchagent.test.sh exercises interrupted publication.
       worker_publish_identity "$identity" || return 4
-      worker_publish_lock_owner || return 1
+      worker_publish_lock_owner || {
+        rm -f -- "$(fm_remote_job_worker_identity_path)"
+        return 1
+      }
       return 0
     fi
     [ -d "$WORKER_LOCK" ] && [ ! -L "$WORKER_LOCK" ] || return 1

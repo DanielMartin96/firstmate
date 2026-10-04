@@ -64,6 +64,15 @@ REAL_MV=$(command -v mv)
 cat > "$STUB_BIN/mv" <<'SH'
 #!/bin/bash
 last=${!#}
+if [ "$last" = "$FM_TEST_STATE/worker.lock/pid" ] && [ -f "$FM_TEST_OWNER_GATE" ]; then
+  : > "$FM_TEST_OWNER_GATE.observed"
+  if [ -f "$FM_TEST_OWNER_GATE.fail" ]; then exit 1; fi
+  for _ in $(seq 1 400); do
+    [ -f "$FM_TEST_OWNER_GATE.release" ] && break
+    /bin/sleep 0.05
+  done
+  [ -f "$FM_TEST_OWNER_GATE.release" ] || exit 1
+fi
 if [ "$last" = "$FM_TEST_STATE/worker.identity" ] && rm "$FM_TEST_IDENTITY_GATE" 2>/dev/null; then
   : > "$FM_TEST_IDENTITY_GATE.observed"
   /bin/sleep 3
@@ -144,6 +153,7 @@ export PATH="$STUB_BIN:$PATH"
 export FM_TEST_REAL_RMDIR="$REAL_RMDIR" FM_TEST_LAUNCH_LOG="$LAUNCH_LOG"
 export FM_TEST_REAL_TOUCH="$REAL_TOUCH" FM_TEST_STALE_GATE="$TMP_ROOT/stale-gate"
 export FM_TEST_REAL_MV="$REAL_MV" FM_TEST_IDENTITY_GATE="$TMP_ROOT/identity-gate"
+export FM_TEST_OWNER_GATE="$TMP_ROOT/owner-gate"
 export FM_TEST_ROOT="$REMOTE_ROOT" FM_TEST_ACCOUNT="$ACCOUNT_HOME"
 export FM_TEST_WORKER="$REMOTE_ROOT/bin/fm-remote-job-worker.sh"
 export FM_TEST_WORKER_LOG="$TMP_ROOT/worker.log" FM_TEST_STATE="$STATE_ROOT"
@@ -190,10 +200,63 @@ tracked() { cat "$FM_TEST_TRACKED" 2>/dev/null; }
 lock_owner() { cat "$STATE_ROOT/worker.lock/pid" 2>/dev/null; }
 launch_count() { grep -c "^$1 " "$LAUNCH_LOG" 2>/dev/null || true; }
 
-# --- a slow sequence-claim sweep must not trigger a LaunchAgent reload -------
+# --- a crashed predecessor's fresh heartbeat cannot ready its replacement ----
 
 fm_remote_job_prepare_state "$ACCOUNT_HOME" || fail 'could not prepare remote job state'
 fm_remote_job_write_launchagent "$REMOTE_ROOT" "$ACCOUNT_HOME" || fail 'could not write the LaunchAgent'
+# Persisted crash leftovers are the public worker state contract. The old
+# process is gone, but its stale code identity and fresh heartbeat remain.
+printf 'stale-code\n' > "$STATE_ROOT/worker.identity"
+printf '99999999\n' > "$STATE_ROOT/worker.ready"
+chmod 600 "$STATE_ROOT/worker.identity" "$STATE_ROOT/worker.ready"
+: > "$FM_TEST_OWNER_GATE"
+launchctl bootstrap "gui/$(id -u)" "$FM_TEST_PLIST" || fail 'could not start the replacement'
+for _ in $(seq 1 200); do
+  [ -f "$FM_TEST_OWNER_GATE.observed" ] && break
+  /bin/sleep 0.05
+done
+[ -f "$FM_TEST_OWNER_GATE.observed" ] || fail 'replacement did not reach lock-owner publication'
+fm_remote_job_worker_identity_matches "$REMOTE_ROOT" "$ACCOUNT_HOME" \
+  || fail 'replacement did not publish its current identity before ownership'
+fm_remote_job_probe "$ACCOUNT_HOME" && fail 'replacement inherited predecessor readiness before recording ownership'
+fm_remote_job_wait_for_probe "$REMOTE_ROOT" "$ACCOUNT_HOME" > "$TMP_ROOT/wait-owner.out" 2>&1 &
+PROBE_WAITER=$!
+/bin/sleep 1
+kill -0 "$PROBE_WAITER" 2>/dev/null || fail 'startup wait accepted the predecessor heartbeat'
+: > "$FM_TEST_OWNER_GATE.release"
+wait "$PROBE_WAITER" || fail 'replacement did not become ready after ownership publication'
+[ "$(fm_remote_job_read_single_line "$STATE_ROOT/worker.ready" 64)" = "$(lock_owner)" ] \
+  || fail 'replacement readiness did not identify its recorded lock owner'
+rm -f "$FM_TEST_OWNER_GATE" "$FM_TEST_OWNER_GATE.observed" "$FM_TEST_OWNER_GATE.release"
+launchctl bootout "gui/$(id -u)/dev.firstmate.remote-job" || fail 'could not stop the replacement'
+pass 'a stale-code crash heartbeat cannot count as replacement readiness'
+
+# --- failed ownership publication rolls back the replacement identity --------
+
+printf 'stale-code\n' > "$STATE_ROOT/worker.identity"
+printf '99999999\n' > "$STATE_ROOT/worker.ready"
+chmod 600 "$STATE_ROOT/worker.identity" "$STATE_ROOT/worker.ready"
+: > "$FM_TEST_OWNER_GATE"
+: > "$FM_TEST_OWNER_GATE.fail"
+if HOME="$ACCOUNT_HOME" FM_ROOT_OVERRIDE="$REMOTE_ROOT" "$FM_TEST_WORKER" > "$TMP_ROOT/failed-owner.out" 2>&1; then
+  fail 'worker succeeded despite failed lock-owner publication'
+fi
+[ -f "$FM_TEST_OWNER_GATE.observed" ] || fail 'failed lock-owner injection was not reached'
+[ ! -e "$STATE_ROOT/worker.identity" ] || fail 'failed lock-owner publication retained replacement identity'
+[ ! -e "$STATE_ROOT/worker.ready" ] || fail 'failed lock-owner publication retained predecessor readiness'
+[ ! -d "$STATE_ROOT/worker.lock" ] || fail 'failed lock-owner publication did not clean up its lock'
+fm_remote_job_probe "$ACCOUNT_HOME" && fail 'probe accepted a worker that failed ownership publication'
+rm -f "$FM_TEST_OWNER_GATE" "$FM_TEST_OWNER_GATE.observed" "$FM_TEST_OWNER_GATE.fail"
+ensure_darwin > "$TMP_ROOT/ensure-failed-owner.out" 2>&1 \
+  || { cat "$TMP_ROOT/ensure-failed-owner.out"; fail 'repair did not recover failed owner publication'; }
+[ "$(fm_remote_job_read_single_line "$STATE_ROOT/worker.ready" 64)" = "$(tracked)" ] \
+  || fail 'repair succeeded without a serving tracked worker'
+launchctl bootout "gui/$(id -u)/dev.firstmate.remote-job" || fail 'could not stop the recovered worker'
+pass 'failed lock-owner publication rolls back identity and permits real repair'
+
+# --- a slow sequence-claim sweep must not trigger a LaunchAgent reload -------
+
+rm -f "$STATE_ROOT/.seq-claims-reaped"
 mkdir -p "$STATE_ROOT/.seq-claims/1"
 touch -t 200001010000 "$STATE_ROOT/.seq-claims/1"
 launchctl bootstrap "gui/$(id -u)" "$FM_TEST_PLIST" || fail 'the stub launchd did not load the agent'
