@@ -1050,13 +1050,13 @@ fm_remote_job_read_single_line() {
 fm_remote_job_recorded_owner_alive() { # <dir>
   local dir=$1 pid recorded_start actual_start recorded_command actual_command
   [ -d "$dir" ] && [ ! -L "$dir" ] || return 1
-  pid=$(fm_remote_job_read_single_line "$dir/pid" 64) || return 1
+  pid=$(fm_remote_job_read_single_line "$dir/pid" 64 2>/dev/null) || return 1
   case "$pid" in ''|*[!0-9]*) return 1 ;; esac
   [ "$pid" -gt 1 ] || return 1
-  recorded_start=$(fm_remote_job_read_single_line "$dir/start" 256) || return 1
+  recorded_start=$(fm_remote_job_read_single_line "$dir/start" 256 2>/dev/null) || return 1
   actual_start=$(fm_remote_job_process_start "$pid") || return 1
   [ "$recorded_start" = "$actual_start" ] || return 1
-  recorded_command=$(fm_remote_job_read_single_line "$dir/command" 8192) || return 1
+  recorded_command=$(fm_remote_job_read_single_line "$dir/command" 8192 2>/dev/null) || return 1
   actual_command=$(fm_remote_job_process_command "$pid") || return 1
   [ "$recorded_command" = "$actual_command" ] || return 1
   FM_REMOTE_JOB_RECORDED_PID=$pid

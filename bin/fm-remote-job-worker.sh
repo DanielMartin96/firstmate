@@ -153,9 +153,8 @@ worker_publish_pid() {
   mv -f -- "$tmp" "$pid_file"
 }
 
-worker_publish_identity() {
-  local account_home=$1 identity identity_file tmp
-  identity=$(fm_remote_job_code_identity "$FM_ROOT" "$account_home") || return 1
+worker_publish_identity() { # <identity>
+  local identity=$1 identity_file tmp
   identity_file=$(fm_remote_job_worker_identity_path)
   tmp=$(umask 077; mktemp "$FM_REMOTE_JOB_STATE/.identity.XXXXXX") || return 1
   printf '%s\n' "$identity" > "$tmp" || { rm -f -- "$tmp"; return 1; }
@@ -212,11 +211,12 @@ worker_recover_quarantine() { # <account-home>
   rm -f -- "$WORKER_LOCK/quarantine"
 }
 
-worker_acquire_lock() {
-  local account_home=$1 attempt=0
+worker_acquire_lock() { # <account-home> <identity>
+  local account_home=$1 identity=$2 attempt=0
   while [ "$attempt" -lt 150 ]; do
     if (umask 077; mkdir "$WORKER_LOCK") 2>/dev/null; then
       WORKER_LOCK_HELD=1
+      worker_publish_identity "$identity" || return 4
       worker_publish_lock_owner || return 1
       return 0
     fi
@@ -1197,23 +1197,24 @@ worker_wait_for_work() {
 }
 
 main() {
-  local account_home lock_status next_sweep=0 sweep_interval
+  local account_home identity lock_status next_sweep=0 sweep_interval
   account_home=$(worker_account_home) || { worker_error "cannot resolve account home"; exit 1; }
   FM_ROOT=$(fm_remote_job_canonical_existing_dir "$FM_ROOT") || { worker_error "configured FM_ROOT is unsafe"; exit 1; }
   [ -f "$FM_ROOT/AGENTS.md" ] && [ ! -L "$FM_ROOT/AGENTS.md" ] || { worker_error "FM_ROOT is not a Firstmate checkout"; exit 1; }
   fm_remote_job_prepare_state "$account_home" || { worker_error "$FM_REMOTE_JOB_ERROR"; exit 1; }
+  identity=$(fm_remote_job_code_identity "$FM_ROOT" "$account_home") || { worker_error "cannot compute worker code identity"; exit 1; }
   WORKER_LOCK=$(fm_remote_job_worker_lock_path)
   trap worker_exit_cleanup EXIT
-  worker_acquire_lock "$account_home"
+  worker_acquire_lock "$account_home" "$identity"
   lock_status=$?
   case "$lock_status" in
     0) ;;
     2) exit 0 ;;
     3) worker_error "worker ownership is quarantined after an unconfirmed shutdown"; exit 75 ;;
+    4) worker_error "cannot publish worker code identity"; exit 1 ;;
     *) worker_error "cannot acquire or safely reclaim worker ownership"; exit 1 ;;
   esac
   trap worker_shutdown HUP INT TERM
-  worker_publish_identity "$account_home" || { worker_error "cannot publish worker code identity"; exit 1; }
   worker_publish_pid || { worker_error "cannot publish worker pid"; exit 1; }
   worker_write_heartbeat "${BASHPID:-$$}" || { worker_error "cannot update worker heartbeat"; exit 1; }
   worker_start_heartbeat "$account_home"
