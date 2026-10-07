@@ -1,0 +1,31 @@
+[10:55:49] scripts: /Users/daniel.martin/.no-mistakes/worktrees/ec5c263228f4/01M4AVW4XWM549CR2Q39DHV842
+[10:55:49] lab home: /var/folders/sj/wkdqwx054mb5c2ffqzxr7yvh0000gn/T//fm-lab.nn4fRo
+[10:55:49] TMUX=/private/var/folders/sj/wkdqwx054mb5c2ffqzxr7yvh0000gn/T/fm-lab.nn4fRo/tmux/tmux-501/fm-lab,35202,0
+[10:56:03] arm1 closed on a real wake: signal: /var/folders/sj/wkdqwx054mb5c2ffqzxr7yvh0000gn/T//fm-lab.nn4fRo/state/queued.status
+[10:56:03] marker after exit: pending:downtime:36599.1791366954.4m6ZMq
+[10:56:03] queue rows:        2
+[10:56:03] marker after recovery: pending:downtime:36599.1791366954.4m6ZMq
+[10:56:05] successor arm 47567: watcher: started pid=47680 (beacon fresh) recovery-generation=36599.1791366954.4m6ZMq
+[10:56:18] drain stdout: 1791366954	2	signal	queued.status	signal: /var/folders/sj/wkdqwx054mb5c2ffqzxr7yvh0000gn/T//fm-lab.nn4fRo/state/queued.status|wake annotation: latest wake-EVENT observed at drain, not current state: queued.status: done: work main drains but never acknowledges|STATUS OUTCOME BACKSTOP (newest captain-facing task event has no covering branch outcome):|queued done: work main drains but never acknowledges|
+[10:56:18] drain stderr: WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 2 --recovery-generation 36599.1791366954.4m6ZMq
+[10:56:18] marker after drain: announced:handling:36599.1791366954.4m6ZMq
+[10:56:18] queue rows:        2
+[10:56:26] take-over first line: watcher: started pid=62359 (beacon fresh)
+[10:56:41] after 15s take-over arm 60997 alive=no
+[10:56:41] take-over output: watcher: started pid=62359 (beacon fresh)|check: rearm-resurface|
+[10:56:41] marker: announced:downtime:36599.1791366954.4m6ZMq
+[10:56:41] queue rows:        2
+[10:56:41] cycle-exits log:
+arm_pid=36390	watcher_pid=36599	origin=started	started_at=1791366949	ended_at=1791366962	exit_code=0	signal=none	reason=actionable-signal	beacon_age=12	lock_before=pid:36599|identity:Wed Oct  7 10:55:49 2026     bash /Users/daniel.martin/.no-mistakes/worktrees/ec5c263228f4/01M4AVW4XWM549CR2Q39DHV842/bin/fm-watch.sh	lock_after=pid:none|identity:none	successor=started:47680
+arm_pid=47567	watcher_pid=47680	origin=started	started_at=1791366963	ended_at=1791366980	exit_code=143	signal=TERM	reason=signal-exit	beacon_age=2	lock_before=pid:47680|identity:Wed Oct  7 10:56:03 2026     bash /Users/daniel.martin/.no-mistakes/worktrees/ec5c263228f4/01M4AVW4XWM549CR2Q39DHV842/bin/fm-watch.sh	lock_after=pid:none|identity:none	successor=none
+arm_pid=60997	watcher_pid=47680	origin=attached	started_at=1791366979	ended_at=1791366981	exit_code=unknown	signal=unknown	reason=taken-over	beacon_age=3	lock_before=pid:47680|identity:Wed Oct  7 10:56:03 2026     bash /Users/daniel.martin/.no-mistakes/worktrees/ec5c263228f4/01M4AVW4XWM549CR2Q39DHV842/bin/fm-watch.sh	lock_after=pid:none|identity:none	successor=started:62359
+arm_pid=60997	watcher_pid=62359	origin=started	started_at=1791366982	ended_at=1791366985	exit_code=0	signal=none	reason=actionable-check	beacon_age=1	lock_before=pid:62359|identity:Wed Oct  7 10:56:22 2026     bash /Users/daniel.martin/.no-mistakes/worktrees/ec5c263228f4/01M4AVW4XWM549CR2Q39DHV842/bin/fm-watch.sh	lock_after=pid:none|identity:none	successor=none
+[10:56:41] deliveries log:
+36599	Wed Oct  7 10:55:49 2026     bash /Users/daniel.martin/.no-mistakes/worktrees/ec5c263228f4/01M4AVW4XWM549CR2Q39DHV842/bin/fm-watch.sh	signal: /var/folders/sj/wkdqwx054mb5c2ffqzxr7yvh0000gn/T//fm-lab.nn4fRo/state/queued.status
+62359	Wed Oct  7 10:56:22 2026     bash /Users/daniel.martin/.no-mistakes/worktrees/ec5c263228f4/01M4AVW4XWM549CR2Q39DHV842/bin/fm-watch.sh	check: rearm-resurface
+[10:56:44] redrain ack pair: 2 36599.1791366954.4m6ZMq
+[10:56:44] acknowledged
+[10:56:52] arm5 after ack alive=yes output: watcher: started pid=74262 (beacon fresh)|
+[10:56:58] fresh cycle closed on the real event: /var/folders/sj/wkdqwx054mb5c2ffqzxr7yvh0000gn/T//fm-lab.nn4fRo/out/arm4-takeover.out:check: rearm-resurface
+/var/folders/sj/wkdqwx054mb5c2ffqzxr7yvh0000gn/T//fm-lab.nn4fRo/out/arm5-after-ack.out:signal: /var/folders/sj/wkdqwx054mb5c2ffqzxr7yvh0000gn/T//fm-lab.nn4fRo/state/after-handover.status
+[10:56:58] done

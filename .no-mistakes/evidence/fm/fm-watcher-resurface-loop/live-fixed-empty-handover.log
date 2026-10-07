@@ -1,0 +1,28 @@
+[10:52:09] scripts: /Users/daniel.martin/.no-mistakes/worktrees/ec5c263228f4/01M4AVW4XWM549CR2Q39DHV842
+[10:52:09] lab home: /var/folders/sj/wkdqwx054mb5c2ffqzxr7yvh0000gn/T//fm-lab.MgrlpH
+[10:52:09] TMUX=/private/var/folders/sj/wkdqwx054mb5c2ffqzxr7yvh0000gn/T/fm-lab.MgrlpH/tmux/tmux-501/fm-lab,79363,0
+[10:52:12] arm1 watcher 80090 stopped by TERM (session exit); arm1 output: watcher: started pid=80090 (beacon fresh)|watcher: FAILED - watcher cycle exited 143 without an actionable reason|
+[10:52:12] marker after exit: pending:downtime:80090.1791366731.OLEiD5
+/Users/daniel.martin/.no-mistakes/evidence/01M4AVW4XWM549CR2Q39DHV842/live-handover-driver.sh: line 27: /var/folders/sj/wkdqwx054mb5c2ffqzxr7yvh0000gn/T//fm-lab.MgrlpH/state/.wake-queue: No such file or directory
+[10:52:12] queue rows: 0
+[10:52:14] arm2 (recovery after downtime) closed with: check: rearm-resurface
+[10:52:14] marker after recovery: announced:downtime:80090.1791366731.OLEiD5
+[10:52:15] successor arm 83966: watcher: started pid=84022 (beacon fresh) recovery-generation=80090.1791366731.OLEiD5
+[10:52:17] drain stdout: 
+[10:52:17] drain stderr: WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 0 --recovery-generation 80090.1791366731.OLEiD5
+[10:52:17] marker after drain: announced:handling:80090.1791366731.OLEiD5
+[10:52:17] queue rows:        0
+[10:52:22] take-over first line: watcher: started pid=87905 (beacon fresh)
+[10:52:37] after 15s take-over arm 86400 alive=yes
+[10:52:37] take-over output: watcher: started pid=87905 (beacon fresh)|
+[10:52:37] marker: announced:handling:80090.1791366731.OLEiD5
+[10:52:37] queue rows:        0
+[10:52:37] cycle-exits log:
+arm_pid=79938	watcher_pid=80090	origin=started	started_at=1791366729	ended_at=1791366731	exit_code=143	signal=TERM	reason=signal-exit	beacon_age=1	lock_before=pid:80090|identity:Wed Oct  7 10:52:09 2026     bash /Users/daniel.martin/.no-mistakes/worktrees/ec5c263228f4/01M4AVW4XWM549CR2Q39DHV842/bin/fm-watch.sh	lock_after=pid:none|identity:none	successor=none
+arm_pid=82665	watcher_pid=82717	origin=started	started_at=1791366732	ended_at=1791366734	exit_code=0	signal=none	reason=actionable-check	beacon_age=1	lock_before=pid:82717|identity:Wed Oct  7 10:52:12 2026     bash /Users/daniel.martin/.no-mistakes/worktrees/ec5c263228f4/01M4AVW4XWM549CR2Q39DHV842/bin/fm-watch.sh	lock_after=pid:none|identity:none	successor=started:84022
+arm_pid=83966	watcher_pid=84022	origin=started	started_at=1791366734	ended_at=1791366738	exit_code=143	signal=TERM	reason=signal-exit	beacon_age=1	lock_before=pid:84022|identity:Wed Oct  7 10:52:14 2026     bash /Users/daniel.martin/.no-mistakes/worktrees/ec5c263228f4/01M4AVW4XWM549CR2Q39DHV842/bin/fm-watch.sh	lock_after=pid:none|identity:none	successor=none
+arm_pid=86400	watcher_pid=84022	origin=attached	started_at=1791366738	ended_at=1791366739	exit_code=unknown	signal=unknown	reason=taken-over	beacon_age=1	lock_before=pid:84022|identity:Wed Oct  7 10:52:14 2026     bash /Users/daniel.martin/.no-mistakes/worktrees/ec5c263228f4/01M4AVW4XWM549CR2Q39DHV842/bin/fm-watch.sh	lock_after=pid:none|identity:none	successor=started:87905
+[10:52:37] deliveries log:
+82717	Wed Oct  7 10:52:12 2026     bash /Users/daniel.martin/.no-mistakes/worktrees/ec5c263228f4/01M4AVW4XWM549CR2Q39DHV842/bin/fm-watch.sh	check: rearm-resurface
+[10:52:42] fresh cycle closed on the real event: /var/folders/sj/wkdqwx054mb5c2ffqzxr7yvh0000gn/T//fm-lab.MgrlpH/out/arm4-takeover.out:signal: /var/folders/sj/wkdqwx054mb5c2ffqzxr7yvh0000gn/T//fm-lab.MgrlpH/state/after-handover.status
+[10:52:42] done

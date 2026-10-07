@@ -1,0 +1,8 @@
+== base commit 53b5bc11 + new fm-watch-arm cases ==
+not ok - --take-over did not own a fresh cycle: check: rearm-resurface
+exit=1
+
+== base commit 53b5bc11 + new fm-wake-queue handover case ==
+not ok - a handover with nothing queued treated the turn it ended as interrupted handling: before=pending:handling:22802.1791366631.WjbU0y
+after=pending:downtime:22802.1791366631.WjbU0y
+exit=1

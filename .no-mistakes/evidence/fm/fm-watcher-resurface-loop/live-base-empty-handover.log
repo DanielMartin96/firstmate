@@ -1,0 +1,29 @@
+[10:52:56] scripts: /var/folders/sj/wkdqwx054mb5c2ffqzxr7yvh0000gn/T//fm-base.0uIF7R
+[10:52:56] lab home: /var/folders/sj/wkdqwx054mb5c2ffqzxr7yvh0000gn/T//fm-lab.0yiYPv
+[10:52:56] TMUX=/private/var/folders/sj/wkdqwx054mb5c2ffqzxr7yvh0000gn/T/fm-lab.0yiYPv/tmux/tmux-501/fm-lab,12581,0
+[10:52:58] arm1 watcher 12701 stopped by TERM (session exit); arm1 output: watcher: started pid=12701 (beacon fresh)|watcher: FAILED - watcher cycle exited 143 without an actionable reason|
+[10:52:58] marker after exit: pending:downtime:12701.1791366778.qgr3kN
+/Users/daniel.martin/.no-mistakes/evidence/01M4AVW4XWM549CR2Q39DHV842/live-handover-driver.sh: line 27: /var/folders/sj/wkdqwx054mb5c2ffqzxr7yvh0000gn/T//fm-lab.0yiYPv/state/.wake-queue: No such file or directory
+[10:52:58] queue rows: 0
+[10:53:00] arm2 (recovery after downtime) closed with: check: rearm-resurface
+[10:53:00] marker after recovery: announced:downtime:12701.1791366778.qgr3kN
+[10:53:03] successor arm 16207: watcher: started pid=16284 (beacon fresh) recovery-generation=12701.1791366778.qgr3kN
+[10:53:05] drain stdout: 
+[10:53:05] drain stderr: WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 0 --recovery-generation 12701.1791366778.qgr3kN
+[10:53:05] marker after drain: announced:handling:12701.1791366778.qgr3kN
+[10:53:05] queue rows:        0
+[10:55:21] take-over first line: check: rearm-resurface
+[10:55:36] after 15s take-over arm 19689 alive=no
+[10:55:36] take-over output: check: rearm-resurface|
+[10:55:37] marker: announced:downtime:12701.1791366778.qgr3kN
+[10:55:37] queue rows:        0
+[10:55:37] cycle-exits log:
+arm_pid=12636	watcher_pid=12701	origin=started	started_at=1791366776	ended_at=1791366778	exit_code=143	signal=TERM	reason=signal-exit	beacon_age=1	lock_before=pid:12701|identity:Wed Oct  7 10:52:56 2026     bash /var/folders/sj/wkdqwx054mb5c2ffqzxr7yvh0000gn/T/fm-base.0uIF7R/bin/fm-watch.sh	lock_after=pid:none|identity:none	successor=none
+arm_pid=14446	watcher_pid=14485	origin=started	started_at=1791366778	ended_at=1791366780	exit_code=0	signal=none	reason=actionable-check	beacon_age=1	lock_before=pid:14485|identity:Wed Oct  7 10:52:58 2026     bash /var/folders/sj/wkdqwx054mb5c2ffqzxr7yvh0000gn/T/fm-base.0uIF7R/bin/fm-watch.sh	lock_after=pid:none|identity:none	successor=started:16284
+arm_pid=16207	watcher_pid=16284	origin=started	started_at=1791366780	ended_at=1791366786	exit_code=143	signal=TERM	reason=signal-exit	beacon_age=1	lock_before=pid:16284|identity:Wed Oct  7 10:53:00 2026     bash /var/folders/sj/wkdqwx054mb5c2ffqzxr7yvh0000gn/T/fm-base.0uIF7R/bin/fm-watch.sh	lock_after=pid:none|identity:none	successor=none
+arm_pid=19689	watcher_pid=16284	origin=attached	started_at=1791366785	ended_at=1791366786	exit_code=unknown	signal=unknown	reason=taken-over	beacon_age=1	lock_before=pid:16284|identity:Wed Oct  7 10:53:00 2026     bash /var/folders/sj/wkdqwx054mb5c2ffqzxr7yvh0000gn/T/fm-base.0uIF7R/bin/fm-watch.sh	lock_after=pid:none|identity:none	successor=none
+arm_pid=19689	watcher_pid=22007	origin=started	started_at=1791366787	ended_at=1791366789	exit_code=0	signal=none	reason=actionable-check	beacon_age=1	lock_before=pid:none|identity:none	lock_after=pid:none|identity:none	successor=none
+[10:55:37] deliveries log:
+14485	Wed Oct  7 10:52:58 2026     bash /var/folders/sj/wkdqwx054mb5c2ffqzxr7yvh0000gn/T/fm-base.0uIF7R/bin/fm-watch.sh	check: rearm-resurface
+22007	Wed Oct  7 10:53:07 2026     bash /var/folders/sj/wkdqwx054mb5c2ffqzxr7yvh0000gn/T/fm-base.0uIF7R/bin/fm-watch.sh	check: rearm-resurface
+[10:55:37] done
