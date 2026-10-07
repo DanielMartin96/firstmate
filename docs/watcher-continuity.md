@@ -232,7 +232,9 @@ A downtime republication of a pending episode reuses its generation.
 A watcher close leaves an announced downtime episode announced, while a successful durable append opens a fresh pending generation so a live watcher can recover the new work.
 An announced handling episode becomes pending downtime on the same generation because its handling turn may have been interrupted.
 That handling republication gives a successor exactly one recovery presentation without orphaning the acknowledgement already printed for that generation.
-A watcher stopped so an arm can take its cycle over (`bin/fm-watch-arm.sh --take-over`) publishes downtime like any close, but the taking arm restores an acknowledged episode that stop reopened only when the taken-over arm's cycle-ledger row for that exact arm and watcher records the watcher ending by the take-over's TERM and no wake was appended in between.
+A watcher stopped so an arm can take its cycle over (`bin/fm-watch-arm.sh --take-over`) publishes downtime like any close, but the taking arm puts the episode that stop found back only when the taken-over arm's cycle-ledger row for that exact arm and watcher records the watcher ending by the take-over's TERM and no wake was appended in between.
+That covers an acknowledged episode the stop reopened as a fresh generation, and a handling episode the stop republished as pending downtime while nothing is queued: the Stop that requested the take-over ended that handling turn, so the stop is a monitor handover rather than an interrupted turn, even when the turn never acknowledged.
+A handling episode with rows still queued is left as downtime, so the fresh cycle recovers the unacknowledged work once.
 The taking arm waits within a short bound for that row; a missing row or any other signal leaves downtime for the fresh cycle's ordinary recovery wake, while take-over still proceeds.
 Any other episode is left for the next cycle's arm check.
 
