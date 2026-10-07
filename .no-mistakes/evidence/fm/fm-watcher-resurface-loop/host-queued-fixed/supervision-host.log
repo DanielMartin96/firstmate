@@ -1,0 +1,7 @@
+1791373110	start	gen=host-90705-1791373109	primary=claude
+1791373115	pass-through	attended	main-only	signal: /private/var/folders/sj/wkdqwx054mb5c2ffqzxr7yvh0000gn/T/fm-host-handover.bMIQgW/home/state/demo.status
+1791373120	start	gen=host-99788-1791373120	primary=claude
+1791373120	take-over	arm=95256
+1791373127	pass-through	attended	main-only	check: rearm-resurface
+1791373140	start	gen=host-24306-1791373140	primary=claude
+1791373140	take-over	arm=8724

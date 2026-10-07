@@ -1,0 +1,5 @@
+1791372809	start	gen=host-91846-1791372808	primary=claude
+1791372848	pass-through	attended	main-only	check: rearm-resurface
+1791372882	start	gen=host-40246-1791372881	primary=claude
+1791372882	take-over	arm=15390
+1791372890	pass-through	attended	main-only	check: rearm-resurface

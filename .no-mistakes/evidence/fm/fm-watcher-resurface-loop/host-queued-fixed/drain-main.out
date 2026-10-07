@@ -1,0 +1,5 @@
+1791373113	2	signal	demo.status	needs-decision: /private/var/folders/sj/wkdqwx054mb5c2ffqzxr7yvh0000gn/T/fm-host-handover.bMIQgW/home/state/demo.status
+wake annotation: latest wake-EVENT observed at drain, not current state: demo.status: needs-decision [at=1791373110]: which export format?
+OPEN DECISIONS (still open, folded from the durable status logs - not just the latest line):
+demo needs-decision: which export format?
+OPEN DECISIONS: close one by answering it: bin/fm-send.sh <task> --resolve-key <key> '<answer>'

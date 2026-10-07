@@ -1,0 +1,13 @@
+[12:33:16] === base: repo=/private/var/folders/sj/wkdqwx054mb5c2ffqzxr7yvh0000gn/T/fm-base-47aff866.tCZmPp ===
+[12:33:24] step1 after watcher TERM: marker=pending:downtime:85030.1791372801.x4TRh6 queue_rows=0
+[12:34:31] step2 host#1 rc=0 host.out: watcher: started pid=94220 (beacon fresh)|check: rearm-resurface|
+[12:34:32] step2 host log tail: 1791372809	start	gen=host-91846-1791372808	primary=claude|1791372848	pass-through	attended	main-only	check: rearm-resurface|
+[12:34:33] step2 marker=announced:downtime:85030.1791372801.x4TRh6 successor_watcher=18250 deliveries(rearm-resurface)=1
+[12:34:40] step3 drain stdout: 
+[12:34:40] step3 drain stderr: WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 0 --recovery-generation 85030.1791372801.x4TRh6|
+[12:34:40] step3 marker=announced:handling:85030.1791372801.x4TRh6 queue_rows=0   (main does NOT run the --ack-through 0 command)
+[12:34:42] step4 host#2 took over the left successor; watching 20s for a re-announcement...
+[12:35:01] step4 host#2 EXITED after 21s rc=0 host.out: watcher: started pid=43871 (beacon fresh)|check: rearm-resurface|
+[12:35:01] step4 host log tail: 1791372882	take-over	arm=15390|1791372890	pass-through	attended	main-only	check: rearm-resurface|
+[12:35:01] step4 marker=announced:downtime:85030.1791372801.x4TRh6 deliveries(rearm-resurface)=2
+[12:35:01] RESULT: LOOP REPRODUCED - the take-over after an unacknowledged empty handling turn re-announced check: rearm-resurface with nothing queued

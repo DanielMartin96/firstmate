@@ -1,0 +1,2 @@
+not ok - a handover with nothing queued treated the turn it ended as interrupted handling: before=pending:handling:74318.1791373420.5Mzzvv
+after=pending:downtime:74318.1791373420.5Mzzvv

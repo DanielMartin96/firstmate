@@ -1,0 +1,14 @@
+[12:31:27] === fixed: repo=/Users/daniel.martin/.no-mistakes/worktrees/ec5c263228f4/01M4B1K0FGC8S1VTZ8HQK1MZYM ===
+[12:31:34] step1 after watcher TERM: marker=pending:downtime:14686.1791372692.ibuvpK queue_rows=0
+[12:31:47] step2 host#1 rc=0 host.out: watcher: started pid=20839 (beacon fresh)|check: rearm-resurface|
+[12:31:47] step2 host log tail: 1791372699	start	gen=host-19498-1791372697	primary=claude|1791372702	pass-through	attended	main-only	check: rearm-resurface|
+[12:31:47] step2 marker=announced:downtime:14686.1791372692.ibuvpK successor_watcher=24079 deliveries(rearm-resurface)=1
+[12:32:02] step3 drain stdout: 
+[12:32:02] step3 drain stderr: WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 0 --recovery-generation 14686.1791372692.ibuvpK|
+[12:32:02] step3 marker=announced:handling:14686.1791372692.ibuvpK queue_rows=0   (main does NOT run the --ack-through 0 command)
+[12:32:08] step4 host#2 took over the left successor; watching 20s for a re-announcement...
+[12:32:48] step4 host#2 still parked after 20s; host.out=watcher: started pid=39760 (beacon fresh)|<end>
+[12:32:48] step4 marker=announced:handling:14686.1791372692.ibuvpK queue_rows=0 watcher_live=yes deliveries(rearm-resurface)=1
+[12:32:48] step4 host log tail: 1791372728	start	gen=host-35817-1791372726	primary=claude|1791372728	take-over	arm=23922|
+[12:33:12] step5 host#2 rc=0 host.out: watcher: started pid=39760 (beacon fresh)|signal: /private/var/folders/sj/wkdqwx054mb5c2ffqzxr7yvh0000gn/T/fm-host-handover.qJFXPz/home/state/demo.status|
+[12:33:13] RESULT: PASS - the monitor handover stayed quiet with nothing queued, and the real event still surfaced

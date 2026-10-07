@@ -1,0 +1,6 @@
+ok - watch-arm: --take-over attaches to a cycle the named arm does not own and leaves it running
+ok - watch-arm: --take-over owns a fresh cycle without a recovery wake and still surfaces queued work
+watcher: secondmate liveness check failed
+ok - watch-arm: takeover preserves self-exit downtime and surfaces a recovery wake
+not ok - the cycle taken over after an unacknowledged empty handling turn closed again: watcher: started pid=51592 (beacon fresh)
+check: rearm-resurface
